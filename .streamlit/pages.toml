@@ -1,0 +1,25 @@
+# Configuración de navegación de páginas de Streamlit
+
+[[pages]]
+path = "main.py"
+name = "Inicio"
+icon = "house"
+
+[[pages]]
+path = "pages/1_Lideres.py"
+name = "Líderes"
+icon = "trophy"
+
+[[pages]]
+path = "pages/2_Partidos.py"
+name = "Partidos"
+icon = "calendar"
+
+[[pages]]
+path = "pages/3_Predicciones.py"
+name = "Predicciones"
+icon = "crystal-ball"
+
+# No se define Jugador aquí; se renderiza dentro de main al buscar
+
+
