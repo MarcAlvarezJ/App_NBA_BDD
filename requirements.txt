@@ -2,3 +2,4 @@ supabase
 pandas
 streamlit
 requests
+matplotlib
