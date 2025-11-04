@@ -1,146 +1,126 @@
-# descargar_jugadores_robusto.py
 import os
 import time
 import pandas as pd
 from nba_api.stats.endpoints import commonplayerinfo
 from requests.exceptions import RequestException
-from datetime import datetime
 
 # ---- Configuración ----
 DATA_DIR = "datos"
 os.makedirs(DATA_DIR, exist_ok=True)
 
-BOX_FILE = os.path.join(DATA_DIR, "boxscores.csv")  # entrada: boxscores con PLAYER_ID
-OUTPUT_FILE = os.path.join(DATA_DIR, "jugadores.csv")        # salida final
-CHECKPOINT_FILE = os.path.join(DATA_DIR, "jugadores_parcial.csv")
+BOX_FILE = os.path.join(DATA_DIR, "boxscores.csv")  # entrada
+OUTPUT_FILE = os.path.join(DATA_DIR, "jugadores.csv")  # salida
 ERRORS_FILE = os.path.join(DATA_DIR, "errores_jugadores.csv")
 
-SLEEP_TIME = 0.6     # pausa entre requests
-SAVE_INTERVAL = 50   # guardar cada N jugadores
+SLEEP_TIME = 0.6
 MAX_RETRIES = 3
+FECHA_REFERENCIA = pd.Timestamp("2024-02-01")
 
-# ---- Funciones utilitarias ----
-def calcular_edad_desde_fecha(fecha_str):
-    """Intenta parsear fecha_str con pandas y devuelve años completos (int)."""
+# ---- Funciones auxiliares ----
+def calcular_edad_desde_fecha(fecha_str, referencia=FECHA_REFERENCIA):
+    """Devuelve edad en años a una fecha de referencia fija."""
     try:
         fecha = pd.to_datetime(fecha_str, errors="coerce")
         if pd.isna(fecha):
             return None
-        hoy = pd.Timestamp.now()
-        edad = hoy.year - fecha.year - ((hoy.month, hoy.day) < (fecha.month, fecha.day))
+        edad = referencia.year - fecha.year - ((referencia.month, referencia.day) < (fecha.month, fecha.day))
         return int(edad)
     except Exception:
         return None
 
+
 def obtener_columna_fecha(df):
-    """Devuelve el nombre de la columna que probablemente contiene la fecha de nacimiento,
-       buscando cualquier columna que tenga 'BIRTH' en su nombre (case-insensitive)."""
     for col in df.columns:
         if "BIRTH" in col.upper():
             return col
     return None
 
-# ---- Leer jugadores únicos desde el boxscore ----
+
+def safe_get(df, colname):
+    return df.loc[0, colname] if colname in df.columns else None
+
+
+# ---- Leer boxscores ----
 if not os.path.exists(BOX_FILE):
-    raise SystemExit(f"No se encontró {BOX_FILE}. Generá primero boxscores_filtrados.csv en {DATA_DIR}.")
+    raise SystemExit(f"No se encontró {BOX_FILE}.")
 
 box_df = pd.read_csv(BOX_FILE, dtype={"PLAYER_ID": str})
-player_ids = box_df["PLAYER_ID"].dropna().unique().tolist()
-print(f"🔎 Encontrados {len(player_ids)} PLAYER_ID únicos en {BOX_FILE}")
 
-# ---- Cargar checkpoint si existe ----
-if os.path.exists(CHECKPOINT_FILE):
-    descargados_df = pd.read_csv(CHECKPOINT_FILE, dtype={"PLAYER_ID": str})
-    descargados_ids = set(descargados_df["PLAYER_ID"].astype(str).tolist())
-    players_data = descargados_df.to_dict("records")
-    print(f"🔁 Reanudando desde checkpoint: {len(descargados_ids)} jugadores ya descargados.")
+# Verificamos columnas clave
+if "PLAYER_ID" not in box_df.columns:
+    raise SystemExit("❌ No se encontró la columna PLAYER_ID en boxscores.csv")
+
+# obtener el equipo más reciente (usando orden de aparición si no hay fechas)
+last_info = (
+    box_df.drop_duplicates(subset=["PLAYER_ID"], keep="last")[["PLAYER_ID", "TEAM_ABBREVIATION"]]
+    if "TEAM_ABBREVIATION" in box_df.columns
+    else pd.DataFrame(columns=["PLAYER_ID", "TEAM_ABBREVIATION"])
+)
+
+player_ids = box_df["PLAYER_ID"].dropna().unique().tolist()
+print(f"🔎 Encontrados {len(player_ids)} PLAYER_ID únicos en boxscores")
+
+# ---- Reanudar descarga si existe jugadores.csv ----
+if os.path.exists(OUTPUT_FILE):
+    jugadores_df = pd.read_csv(OUTPUT_FILE, dtype={"PLAYER_ID": str})
+    descargados_ids = set(jugadores_df["PLAYER_ID"].astype(str))
+    print(f"🔁 Reanudando: {len(descargados_ids)} jugadores ya descargados.")
 else:
+    jugadores_df = pd.DataFrame()
     descargados_ids = set()
-    players_data = []
 
 errores = []
-
-# ---- Descargar info de cada jugador ----
 remaining_ids = [pid for pid in player_ids if str(pid) not in descargados_ids]
-total = len(remaining_ids)
-print(f"📥 Descargando info para {total} jugadores restantes...")
+print(f"📥 Descargando info para {len(remaining_ids)} jugadores restantes...")
 
+# ---- Descargar info de jugadores ----
 for idx, pid in enumerate(remaining_ids, start=1):
     pid_str = str(pid)
-    success = False
-
     for intento in range(1, MAX_RETRIES + 1):
         try:
-            print(f"[{idx}/{total}] PLAYER_ID={pid_str} (intento {intento})")
+            print(f"[{idx}/{len(remaining_ids)}] PLAYER_ID={pid_str}")
             info = commonplayerinfo.CommonPlayerInfo(player_id=pid_str)
-            df_info = info.get_data_frames()[0]  # frame con una fila con datos generales
+            df_info = info.get_data_frames()[0]
 
-            # --- Extraer campos con robustez ---
-            # columnas que queremos: PLAYER_ID, FIRST_NAME, LAST_NAME, POSITION, HEIGHT, WEIGHT, TEAM_ID, TEAM_ABBREVIATION, AGE
-            row = {}
-            # PLAYER_ID
-            row["PLAYER_ID"] = pid_str
+            row = {"PLAYER_ID": pid_str}
+            row["FIRST_NAME"] = safe_get(df_info, "FIRST_NAME")
+            row["LAST_NAME"] = safe_get(df_info, "LAST_NAME")
+            row["POSITION"] = safe_get(df_info, "POSITION")
+            row["HEIGHT"] = safe_get(df_info, "HEIGHT")
+            row["WEIGHT"] = safe_get(df_info, "WEIGHT")
 
-            def safe_get(colname):
-                return df_info.loc[0, colname] if colname in df_info.columns else None
+            # equipo más reciente
+            hist = last_info[last_info["PLAYER_ID"] == pid_str]
+            row["TEAM_ABBREVIATION"] = hist["TEAM_ABBREVIATION"].values[0] if not hist.empty else safe_get(df_info, "TEAM_ABBREVIATION")
 
-            row["FIRST_NAME"] = safe_get("FIRST_NAME")
-            row["LAST_NAME"] = safe_get("LAST_NAME")
-            row["POSITION"] = safe_get("POSITION")
-            row["HEIGHT"] = safe_get("HEIGHT")
-            row["WEIGHT"] = safe_get("WEIGHT")
-            # Team actual del jugador (puede ser 0 o None si agente libre)
-            row["TEAM_ID"] = safe_get("TEAM_ID")
-            row["TEAM_ABBREVIATION"] = safe_get("TEAM_ABBREVIATION")
+            # fecha de nacimiento y edad al 1 de febrero de 2024
+            birth_col = obtener_columna_fecha(df_info)
+            birth_val = safe_get(df_info, birth_col) if birth_col else None
+            row["AGE"] = calcular_edad_desde_fecha(birth_val)
 
-            # AGE: preferimos columna AGE si existe y no es nula
-            age_val = safe_get("AGE")
-            if pd.notna(age_val) and age_val not in ("", None):
-                try:
-                    row["AGE"] = int(age_val)
-                except Exception:
-                    # si AGE viene como '26' o '26.0' o string, intentar convertir
-                    try:
-                        row["AGE"] = int(float(age_val))
-                    except Exception:
-                        row["AGE"] = None
-            else:
-                # intentar calcular desde columna de nacimiento si existe
-                fecha_col = obtener_columna_fecha(df_info)
-                if fecha_col:
-                    birth_val = safe_get(fecha_col)
-                    edad_calc = calcular_edad_desde_fecha(birth_val)
-                    row["AGE"] = edad_calc
-                else:
-                    row["AGE"] = None
+            # guardar al CSV directamente
+            new_df = pd.DataFrame([row])
+            new_df.to_csv(OUTPUT_FILE, mode="a", header=not os.path.exists(OUTPUT_FILE), index=False)
 
-            players_data.append(row)
             descargados_ids.add(pid_str)
-            success = True
             time.sleep(SLEEP_TIME)
             break
 
         except RequestException as e:
-            print(f"⚠️ Error de conexión para PLAYER_ID={pid_str}: {e}")
+            print(f"⚠️ Error de conexión {pid_str}: {e}")
             if intento < MAX_RETRIES:
-                espera = 60
-                print(f"   Esperando {espera}s antes de reintentar...")
-                time.sleep(espera)
+                print("   Reintentando en 60s...")
+                time.sleep(60)
             else:
                 errores.append((pid_str, f"RequestException: {e}"))
         except Exception as e:
-            print(f"❌ Error procesando PLAYER_ID={pid_str}: {e}")
+            print(f"❌ Error procesando {pid_str}: {e}")
             errores.append((pid_str, str(e)))
             break
 
-    # Guardado periódico (checkpoint)
-    if len(players_data) % SAVE_INTERVAL == 0:
-        parcial_df = pd.DataFrame(players_data)
-        parcial_df.to_csv(CHECKPOINT_FILE, index=False)
-        print(f"💾 Checkpoint guardado: {CHECKPOINT_FILE} ({len(players_data)} jugadores)")
+# ---- Guardar errores ----
+if errores:
+    pd.DataFrame(errores, columns=["PLAYER_ID", "ERROR"]).to_csv(ERRORS_FILE, index=False)
+    print(f"⚠️ Se guardaron {len(errores)} errores en {ERRORS_FILE}")
 
-# ---- Guardado final ----
-if players_data:
-    final_df = pd.DataFrame(players_data)
-    final_df.to_csv(OUTPUT_FILE, index=False)
-    print(f"\n✅ Jugadores guardados en: {OUTPUT_FILE} (total {len(final_df)})")
+print(f"\n✅ Descarga finalizada. Total jugadores: {len(descargados_ids)} guardados en {OUTPUT_FILE}")
