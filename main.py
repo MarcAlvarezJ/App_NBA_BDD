@@ -1,8 +1,11 @@
 import streamlit as st
 import pandas as pd
-from utils import load_data
+from utils import load_data, check_auth, logout, get_current_user, init_session_state
 
 st.set_page_config(page_title="NBA Stats App", layout="wide")
+
+# Inicializar estado de sesión
+init_session_state()
 
 # ---------- Data ----------
 partidos, partidos_futuros, boxscores, equipos, jugadores = load_data()
@@ -16,7 +19,27 @@ if ss.get("_last_page") != "main":
     ss.jugador_sel = ""
     ss.team_sel = ""
 
-st.title("🏀 NBA Stats Dashboard")
+# Barra superior con información del usuario y logout
+col1, col2, col3 = st.columns([5, 1, 1])
+with col1:
+	st.title("🏀 NBA Stats Dashboard")
+with col2:
+	user = get_current_user()
+	if user:
+		st.success(f"👤 {user.email}")
+		st.caption("Modo: Autenticado")
+	else:
+		st.info("👤 Usuario anónimo")
+		st.caption("Modo: Sin autenticación")
+with col3:
+	if check_auth():
+		if st.button("🚪 Cerrar Sesión"):
+			logout()
+			st.rerun()
+	else:
+		if st.button("🔐 Iniciar Sesión"):
+			st.switch_page("pages/0_Login.py")
+
 st.header("🏠 Tabla de Posiciones (temporada completa)")
 
 # ==============================================================

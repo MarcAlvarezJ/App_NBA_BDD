@@ -3,9 +3,12 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
-from utils import load_data
+from utils import load_data, check_auth, init_session_state
 
 st.set_page_config(page_title="Jugador | NBA Stats App", layout="wide")
+
+# Inicializar estado de sesión
+init_session_state()
 
 # ================== DATA ==================
 partidos, partidos_futuros, boxscores, equipos, jugadores = load_data()

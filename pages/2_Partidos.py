@@ -4,9 +4,12 @@ import itertools
 import pandas as pd
 import streamlit as st
 import plotly.graph_objects as go
-from utils import load_data
+from utils import load_data, check_auth, init_session_state
 
 st.set_page_config(page_title="Partidos | NBA Stats App", layout="wide")
+
+# Inicializar estado de sesión
+init_session_state()
 
 partidos, _, boxscores, equipos, _ = load_data()
 ss = st.session_state
