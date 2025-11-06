@@ -20,7 +20,7 @@ if ss.get("_last_page") != "main":
     ss.team_sel = ""
 
 # Barra superior con información del usuario y logout
-col1, col2, col3 = st.columns([5, 1, 1])
+col1, col2, col3, col4 = st.columns([4, 1, 1, 1])
 with col1:
 	st.title("🏀 NBA Stats Dashboard")
 with col2:
@@ -32,6 +32,10 @@ with col2:
 		st.info("👤 Usuario anónimo")
 		st.caption("Modo: Sin autenticación")
 with col3:
+	if check_auth():
+		if st.button("⚙️ Administración"):
+			st.switch_page("pages/6_Admin.py")
+with col4:
 	if check_auth():
 		if st.button("🚪 Cerrar Sesión"):
 			logout()

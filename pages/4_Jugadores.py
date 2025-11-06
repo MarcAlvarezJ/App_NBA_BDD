@@ -3,7 +3,7 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
-from utils import load_data, check_auth, init_session_state
+from utils import load_data, check_auth, init_session_state, minutos_decimal_a_mmss
 
 st.set_page_config(page_title="Jugador | NBA Stats App", layout="wide")
 
@@ -141,6 +141,9 @@ def resumen_jugador(name: str) -> pd.Series:
     return serie_promedios(d)
 
 def fmt(v, key):
+    # Si es MIN, convertir a formato mm:ss
+    if key == "MIN" and v is not None and not pd.isna(v):
+        return minutos_decimal_a_mmss(v)
     if v is None or pd.isna(v): return "—"
     if key in ("FG_PCT","FG3_PCT","FT_PCT"): return f"{v:.1f}%"
     return f"{float(v):.1f}"
@@ -379,7 +382,11 @@ if s2 is None:
     d = boxscores[boxscores["PLAYER_NAME"].str.lower() == jug_1.lower()].copy()
     cols = [c for c in ["GAME_ID","TEAM_ABBREVIATION","MIN","PTS","FGM","FGA","FG3M","FG3A","FTM","FTA",
                         "REB","AST","STL","BLK","TOV","PF","PLUS_MINUS"] if c in d.columns]
-    st.dataframe(d[cols], use_container_width=True, height=480)
+    # Convertir MIN a formato mm:ss para display
+    d_display = d[cols].copy()
+    if "MIN" in d_display.columns:
+        d_display["MIN"] = d_display["MIN"].apply(lambda x: minutos_decimal_a_mmss(x) if pd.notna(x) else "0:00")
+    st.dataframe(d_display, use_container_width=True, height=480)
 
 else:
     # ---------- COMPARACIÓN ----------
@@ -432,7 +439,11 @@ else:
         d = boxscores[boxscores["PLAYER_NAME"].str.lower() == name.lower()].copy()
         cols = [c for c in ["GAME_ID","TEAM_ABBREVIATION","MIN","PTS","FGM","FGA","FG3M","FG3A","FTM","FTA",
                             "REB","AST","STL","BLK","TOV","PF","PLUS_MINUS"] if c in d.columns]
-        return d[cols]
+        d_display = d[cols].copy()
+        # Convertir MIN a formato mm:ss para display
+        if "MIN" in d_display.columns:
+            d_display["MIN"] = d_display["MIN"].apply(lambda x: minutos_decimal_a_mmss(x) if pd.notna(x) else "0:00")
+        return d_display
     c1, c2 = st.columns(2)
     with c1:
         st.caption(jug_1); st.dataframe(hist_df(jug_1), use_container_width=True, height=420)

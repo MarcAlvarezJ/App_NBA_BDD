@@ -4,7 +4,7 @@ import itertools
 import pandas as pd
 import streamlit as st
 import plotly.graph_objects as go
-from utils import load_data, check_auth, init_session_state
+from utils import load_data, check_auth, init_session_state, minutos_decimal_a_mmss
 
 st.set_page_config(page_title="Partidos | NBA Stats App", layout="wide")
 
@@ -357,6 +357,10 @@ def render_boxscore_inline(game_id: str):
             "STL":"STL","BLK":"BLK","TOV":"TOV","PF":"PF",
             "PLUS_MINUS":"+/-"
         }).copy()
+
+        # Convertir MIN a formato mm:ss para display
+        if "MIN" in df_show.columns:
+            df_show["MIN"] = df_show["MIN"].apply(lambda x: minutos_decimal_a_mmss(x) if pd.notna(x) else "0:00")
 
         if "PTS" in df_show.columns:
             df_show = df_show.sort_values("PTS", ascending=False)
