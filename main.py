@@ -93,12 +93,16 @@ if sel_any:
 # ✅ TABLA DE POSICIONES
 # ==============================================================
 
-def posiciones_tabla(partidos_df: pd.DataFrame, equipos_df: pd.DataFrame) -> pd.DataFrame:
+def posiciones_tabla(partidos_df: pd.DataFrame, equipos_df: pd.DataFrame) -> dict:
+    """
+    Calcula las tablas de posiciones divididas por conferencia.
+    Retorna un diccionario con 'East' y 'West', cada uno con un DataFrame.
+    """
     df = partidos_df.copy()
     req = ["GAME_ID","FECHA","LOCAL","VISITANTE","PTS_LOCAL","PTS_VISITANTE"]
     if not all(c in df.columns for c in req):
         st.warning("❗ Faltan columnas necesarias en el archivo de partidos")
-        return pd.DataFrame()
+        return {"East": pd.DataFrame(), "West": pd.DataFrame()}
 
     df["FECHA"] = pd.to_datetime(df["FECHA"], errors='ignore')
 
@@ -108,7 +112,7 @@ def posiciones_tabla(partidos_df: pd.DataFrame, equipos_df: pd.DataFrame) -> pd.
         PTS_AGAINST=df["PTS_VISITANTE"],
         WIN=(df["PTS_LOCAL"] > df["PTS_VISITANTE"]).astype(int),
         LOSS=(df["PTS_LOCAL"] < df["PTS_VISITANTE"]).astype(int),
-    )[["TEAM_ABBREVIATION","PTS_FOR","PTS_AGAINST","WIN","LOSS"]]
+    )[["TEAM_ABBREVIATION","PTS_FOR","PTS_AGAINST","WIN","LOSS","FECHA"]]
 
     away = df.assign(
         TEAM_ABBREVIATION=df["VISITANTE"],
@@ -116,33 +120,81 @@ def posiciones_tabla(partidos_df: pd.DataFrame, equipos_df: pd.DataFrame) -> pd.
         PTS_AGAINST=df["PTS_LOCAL"],
         WIN=(df["PTS_VISITANTE"] > df["PTS_LOCAL"]).astype(int),
         LOSS=(df["PTS_VISITANTE"] < df["PTS_LOCAL"]).astype(int),
-    )[["TEAM_ABBREVIATION","PTS_FOR","PTS_AGAINST","WIN","LOSS"]]
+    )[["TEAM_ABBREVIATION","PTS_FOR","PTS_AGAINST","WIN","LOSS","FECHA"]]
 
     tabla = pd.concat([home, away], ignore_index=True)
     tabla = (
         tabla.groupby("TEAM_ABBREVIATION", as_index=False)
         .agg(
-            PJ=("WIN","count"),
-            G=("WIN","sum"),
-            P=("LOSS","sum"),
+            PJ=("FECHA","count"),
+            PG=("WIN","sum"),
+            PP=("LOSS","sum"),
             PTS_FOR=("PTS_FOR","sum"),
             PTS_AGAINST=("PTS_AGAINST","sum")
         )
     )
     tabla["DIF"] = tabla["PTS_FOR"] - tabla["PTS_AGAINST"]
-    tabla = tabla.sort_values(["G","DIF"], ascending=False).reset_index(drop=True)
-    tabla.insert(0, "POS", range(1, len(tabla)+1))
 
+    # Agregar nombre y conferencia desde equipos_df
     if "TEAM_NAME" in equipos_df.columns:
         tabla = tabla.merge(
             equipos_df[["TEAM_ABBREVIATION","TEAM_NAME"]].drop_duplicates(),
             on="TEAM_ABBREVIATION", how="left"
         )
+        tabla["Equipo"] = tabla["TEAM_NAME"].fillna(tabla["TEAM_ABBREVIATION"])
+    else:
+        tabla["Equipo"] = tabla["TEAM_ABBREVIATION"]
+    
+    # Agregar conferencia
+    if "CONFERENCE" in equipos_df.columns:
+        tabla = tabla.merge(
+            equipos_df[["TEAM_ABBREVIATION","CONFERENCE"]].drop_duplicates(),
+            on="TEAM_ABBREVIATION", how="left"
+        )
+        tabla = tabla.dropna(subset=["CONFERENCE"])
+    else:
+        st.warning("❗ No se encontró la columna CONFERENCE en equipos.csv")
+        return {"East": pd.DataFrame(), "West": pd.DataFrame()}
 
-    return tabla[["POS","TEAM_ABBREVIATION","TEAM_NAME","PJ","G","P","PTS_FOR","PTS_AGAINST","DIF"]]
+    # Dividir por conferencia
+    east = tabla[tabla["CONFERENCE"] == "East"].copy()
+    west = tabla[tabla["CONFERENCE"] == "West"].copy()
+    
+    # Renombrar PG a W y PP a L
+    east = east.rename(columns={"PG": "W", "PP": "L"})
+    west = west.rename(columns={"PG": "W", "PP": "L"})
+    
+    # Ordenar por victorias (descendente) y luego por diferencia (descendente)
+    east = east.sort_values(["W", "DIF"], ascending=[False, False]).reset_index(drop=True)
+    west = west.sort_values(["W", "DIF"], ascending=[False, False]).reset_index(drop=True)
+    
+    # Agregar número de posición
+    east.insert(0, "#", range(1, len(east) + 1))
+    west.insert(0, "#", range(1, len(west) + 1))
+    
+    # Seleccionar columnas finales (sin PJ)
+    east = east[["#","Equipo","W","L","DIF"]].copy()
+    west = west[["#","Equipo","W","L","DIF"]].copy()
+    
+    return {"East": east, "West": west}
 
-tabla = posiciones_tabla(partidos, equipos)
-st.dataframe(tabla, use_container_width=True)
+tablas = posiciones_tabla(partidos, equipos)
+
+col1, col2 = st.columns(2)
+
+with col1:
+    st.subheader("🏀 Eastern Conference")
+    if not tablas["East"].empty:
+        st.dataframe(tablas["East"], use_container_width=True, hide_index=True)
+    else:
+        st.info("No hay datos disponibles")
+
+with col2:
+    st.subheader("🏀 Western Conference")
+    if not tablas["West"].empty:
+        st.dataframe(tablas["West"], use_container_width=True, hide_index=True)
+    else:
+        st.info("No hay datos disponibles")
 
 # ---------- Marcar página ----------
 ss._last_page = "main"

@@ -145,3 +145,4 @@ else:
 if errores:
     pd.DataFrame(errores, columns=["GAME_ID", "ERROR"]).to_csv(ERRORS_FILE, index=False)
     print(f"⚠️ Se guardaron {len(errores)} errores en '{ERRORS_FILE}'")
+

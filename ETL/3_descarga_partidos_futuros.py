@@ -80,3 +80,4 @@ partidos_futuros_df.to_csv("./datos/partidos_futuros.csv", index=False, encoding
 
 print(f"✅ partidos_futuros.csv guardado con {len(partidos_futuros_df)} partidos posteriores a {FECHA_LIMITE}")
 print(partidos_futuros_df.head())
+

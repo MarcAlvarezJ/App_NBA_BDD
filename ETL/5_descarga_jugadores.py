@@ -124,3 +124,4 @@ if errores:
     print(f"⚠️ Se guardaron {len(errores)} errores en {ERRORS_FILE}")
 
 print(f"\n✅ Descarga finalizada. Total jugadores: {len(descargados_ids)} guardados en {OUTPUT_FILE}")
+

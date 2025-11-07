@@ -87,3 +87,4 @@ partidos_df = pd.DataFrame(partidos)
 partidos_df = partidos_df.sort_values("FECHA")
 partidos_df.to_csv("./datos/partido.csv", index=False, encoding="utf-8-sig")
 print(f"✅ partido.csv guardado con {len(partidos_df)} partidos hasta {FECHA_LIMITE}")
+

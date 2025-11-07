@@ -160,9 +160,13 @@ def render_history_cards(df: pd.DataFrame, abbr: str):
                 st.markdown(f"<div style='margin-top:-2px;'>{badge}</div>", unsafe_allow_html=True)
 
 
-def build_standings(df_games: pd.DataFrame, equipos_df: pd.DataFrame) -> pd.DataFrame:
+def build_standings(df_games: pd.DataFrame, equipos_df: pd.DataFrame) -> dict:
+    """
+    Calcula las tablas de posiciones divididas por conferencia.
+    Retorna un diccionario con 'East' y 'West', cada uno con un DataFrame.
+    """
     if df_games is None or df_games.empty:
-        return pd.DataFrame()
+        return {"East": pd.DataFrame(), "West": pd.DataFrame()}
 
     df = df_games.copy()
     c_fecha = _col(df, "FECHA","fecha","DATE","date")
@@ -170,7 +174,8 @@ def build_standings(df_games: pd.DataFrame, equipos_df: pd.DataFrame) -> pd.Data
     c_vis   = _col(df, "VISITANTE","away","AWAY")
     c_pl    = _col(df, "PTS_LOCAL","pts_local","HOME_PTS")
     c_pv    = _col(df, "PTS_VISITANTE","pts_visitante","AWAY_PTS")
-    if not all([c_fecha, c_loc, c_vis, c_pl, c_pv]): return pd.DataFrame()
+    if not all([c_fecha, c_loc, c_vis, c_pl, c_pv]): 
+        return {"East": pd.DataFrame(), "West": pd.DataFrame()}
 
     df[c_fecha] = pd.to_datetime(df[c_fecha], errors="coerce")
     df = df.sort_values(c_fecha)
@@ -211,6 +216,7 @@ def build_standings(df_games: pd.DataFrame, equipos_df: pd.DataFrame) -> pd.Data
 
     tabla["last5"] = tabla["ABBR"].map(lambda t: take_last5(last_all.get(t, [])))
 
+    # Agregar nombre y conferencia desde equipos_df
     if "TEAM_NAME" in equipos_df.columns:
         tabla = tabla.merge(
             equipos_df[["TEAM_ABBREVIATION","TEAM_NAME"]].drop_duplicates(),
@@ -219,16 +225,43 @@ def build_standings(df_games: pd.DataFrame, equipos_df: pd.DataFrame) -> pd.Data
         tabla["Equipo"] = tabla["TEAM_NAME"].fillna(tabla["ABBR"])
     else:
         tabla["Equipo"] = tabla["ABBR"]
+    
+    # Agregar conferencia
+    if "CONFERENCE" in equipos_df.columns:
+        tabla = tabla.merge(
+            equipos_df[["TEAM_ABBREVIATION","CONFERENCE"]].drop_duplicates(),
+            left_on="ABBR", right_on="TEAM_ABBREVIATION", how="left"
+        )
+        tabla = tabla.dropna(subset=["CONFERENCE"])
+    else:
+        return {"East": pd.DataFrame(), "West": pd.DataFrame()}
 
-    tabla = tabla.sort_values(by=["PG","DIF"], ascending=[False, False]).reset_index(drop=True)
-    tabla.insert(0, "#", range(1, len(tabla) + 1))
-    return tabla[["#","ABBR","Equipo","PJ","PG","PP","DIF","last5"]]
+    # Dividir por conferencia
+    east = tabla[tabla["CONFERENCE"] == "East"].copy()
+    west = tabla[tabla["CONFERENCE"] == "West"].copy()
+    
+    # Renombrar PG a W y PP a L
+    east = east.rename(columns={"PG": "W", "PP": "L"})
+    west = west.rename(columns={"PG": "W", "PP": "L"})
+    
+    # Ordenar por victorias (descendente) y luego por diferencia (descendente)
+    east = east.sort_values(by=["W","DIF"], ascending=[False, False]).reset_index(drop=True)
+    west = west.sort_values(by=["W","DIF"], ascending=[False, False]).reset_index(drop=True)
+    
+    # Agregar número de posición
+    east.insert(0, "#", range(1, len(east) + 1))
+    west.insert(0, "#", range(1, len(west) + 1))
+    
+    # Seleccionar columnas finales (mantener ABBR para selección, sin PJ)
+    east = east[["#","ABBR","Equipo","W","L","DIF","last5"]].copy()
+    west = west[["#","ABBR","Equipo","W","L","DIF","last5"]].copy()
+    
+    return {"East": east, "West": west}
 
-def render_standings_html(tabla: pd.DataFrame, selected: str):
-    if tabla.empty:
-        st.info("No hay posiciones disponibles.")
-        return
-
+def render_standings_html(tablas: dict, selected: str):
+    """
+    Renderiza las tablas de posiciones divididas por conferencia.
+    """
     css = """
     <style>
       .standings { width:100%; border-collapse:separate; border-spacing:0 6px; }
@@ -245,32 +278,38 @@ def render_standings_html(tabla: pd.DataFrame, selected: str):
       .w { background:#1f6f3f; }
       .l { background:#8e2727; }
       .n { background:#6b7280; }
-      .abbr { color:#9fb6d4; font-weight:700; margin-right:6px; }
     </style>
     """
+    
+    for conf_name, tabla in tablas.items():
+        if tabla.empty:
+            st.info(f"No hay posiciones disponibles para {conf_name} Conference.")
+            continue
+        
+        st.markdown(f"### {conf_name} Conference")
+        html = [css, "<table class='standings'>",
+                "<thead><tr>",
+                "<th>#</th><th class='left'>Equipo</th><th>W</th><th>L</th><th>DIF</th><th>Últimos 5</th>",
+                "</tr></thead><tbody>"]
 
-    html = [css, "<table class='standings'>",
-            "<thead><tr>",
-            "<th>#</th><th class='left'>Equipo</th><th>PJ</th><th>PG</th><th>PP</th><th>DIF</th><th>Últimos 5</th>",
-            "</tr></thead><tbody>"]
+        for _, r in tabla.iterrows():
+            # Verificar si el equipo seleccionado está en esta tabla
+            cls = "row sel" if r["ABBR"] == selected else "row"
+            pills = "".join(
+                f"<span class='pill {'w' if v=='W' else 'l' if v=='L' else 'n'}'>{v if v else ''}</span>"
+                for v in r["last5"]
+            )
+            html.append(
+                f"<tr class='{cls}'>"
+                f"<td>{r['#']}</td>"
+                f"<td class='left'>{r['Equipo']}</td>"
+                f"<td>{r['W']}</td><td>{r['L']}</td><td>{r['DIF']}</td>"
+                f"<td>{pills}</td>"
+                f"</tr>"
+            )
 
-    for _, r in tabla.iterrows():
-        cls = "row sel" if r["ABBR"] == selected else "row"
-        pills = "".join(
-            f"<span class='pill {'w' if v=='W' else 'l' if v=='L' else 'n'}'>{v if v else ''}</span>"
-            for v in r["last5"]
-        )
-        html.append(
-            f"<tr class='{cls}'>"
-            f"<td>{r['#']}</td>"
-            f"<td class='left'><span class='abbr'>{r['ABBR']}</span>{r['Equipo']}</td>"
-            f"<td>{r['PJ']}</td><td>{r['PG']}</td><td>{r['PP']}</td><td>{r['DIF']}</td>"
-            f"<td>{pills}</td>"
-            f"</tr>"
-        )
-
-    html.append("</tbody></table>")
-    st.markdown("".join(html), unsafe_allow_html=True)
+        html.append("</tbody></table>")
+        st.markdown("".join(html), unsafe_allow_html=True)
 
 # ---------- roster helpers ----------
 def _full_name_from_row(r: pd.Series) -> str:
