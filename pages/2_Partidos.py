@@ -1,6 +1,8 @@
 # pages/3_Partidos.py
+
 import math
 import itertools
+import calendar
 import pandas as pd
 import streamlit as st
 import plotly.graph_objects as go
@@ -14,8 +16,11 @@ init_session_state()
 partidos, _, boxscores, equipos, _ = load_data()
 ss = st.session_state
 ss.setdefault("game_sel", "")
+ss.setdefault("selected_date", None)
+ss.setdefault("calendar_year", None)
+ss.setdefault("calendar_month", None)
 
-st.title("📅 Partidos por jornadas")
+st.title("📅 Partidos por calendario")
 
 # ---------- helpers ----------
 def _col(df, *names):
@@ -24,8 +29,25 @@ def _col(df, *names):
             return n
     return None
 
+def get_team_logo(equipos_df: pd.DataFrame, abbr: str):
+    """
+    Devuelve la URL del logo para el TEAM_ABBREVIATION dado.
+    Usa LOGO_URL si existe. Si no hay, devuelve None.
+    """
+    if equipos_df is None or equipos_df.empty:
+        return None
+    if "TEAM_ABBREVIATION" not in equipos_df.columns:
+        return None
+    if "LOGO_URL" in equipos_df.columns:
+        sub = equipos_df.loc[equipos_df["TEAM_ABBREVIATION"] == abbr, "LOGO_URL"]
+        if not sub.empty:
+            url = str(sub.iloc[0]).strip()
+            if url:
+                return url
+    return None
+
 def preparar_partidos(df_raw: pd.DataFrame) -> pd.DataFrame:
-    """Normaliza columnas, ordena por fecha y calcula JORNADA (1..48)."""
+    """Normaliza columnas, asegura tipos y crea FECHA_DATE (date)."""
     if df_raw is None or df_raw.empty:
         return pd.DataFrame()
 
@@ -39,61 +61,23 @@ def preparar_partidos(df_raw: pd.DataFrame) -> pd.DataFrame:
     if any(c is None for c in [c_game, c_fecha, c_loc, c_vis, c_pl, c_pv]):
         return pd.DataFrame()
 
-    df = df[[c_game,c_fecha,c_loc,c_vis,c_pl,c_pv]].copy()
-    df.columns = ["GAME_ID","FECHA","LOCAL","VISITANTE","PTS_LOCAL","PTS_VISITANTE"]
+    df = df[[c_game, c_fecha, c_loc, c_vis, c_pl, c_pv]].copy()
+    df.columns = ["GAME_ID", "FECHA", "LOCAL", "VISITANTE", "PTS_LOCAL", "PTS_VISITANTE"]
+
     df["FECHA"] = pd.to_datetime(df["FECHA"], errors="coerce")
-    df = df.sort_values(["FECHA","GAME_ID"]).reset_index(drop=True)
+    df = df[df["FECHA"].notna()].copy()
+    df["FECHA_DATE"] = df["FECHA"].dt.date
 
-    # progresivo por equipo (para armar "jornadas")
-    long_home = df[["GAME_ID","FECHA","LOCAL"]].rename(columns={"LOCAL":"TEAM"})
-    long_away = df[["GAME_ID","FECHA","VISITANTE"]].rename(columns={"VISITANTE":"TEAM"})
-    long = pd.concat([long_home,long_away], ignore_index=True).sort_values(["TEAM","FECHA","GAME_ID"])
-    long["N_PARTIDO"] = long.groupby("TEAM").cumcount() + 1
+    df["PTS_LOCAL"] = pd.to_numeric(df["PTS_LOCAL"], errors="coerce").fillna(0).astype(int)
+    df["PTS_VISITANTE"] = pd.to_numeric(df["PTS_VISITANTE"], errors="coerce").fillna(0).astype(int)
+    df["MARCADOR"] = df["PTS_LOCAL"].astype(str) + " - " + df["PTS_VISITANTE"].astype(str)
 
-    h = long.merge(df[["GAME_ID","LOCAL","VISITANTE"]], on="GAME_ID", how="right")
-    n_home = h[h["TEAM"] == h["LOCAL"]][["GAME_ID","N_PARTIDO"]].rename(columns={"N_PARTIDO":"N_HOME"})
-    n_away = h[h["TEAM"] == h["VISITANTE"]][["GAME_ID","N_PARTIDO"]].rename(columns={"N_PARTIDO":"N_AWAY"})
-
-    out = df.merge(n_home, on="GAME_ID", how="left").merge(n_away, on="GAME_ID", how="left")
-    out["JORNADA"] = out[["N_HOME","N_AWAY"]].max(axis=1).astype("Int64")
-    out = out[out["JORNADA"].notna() & (out["JORNADA"] <= 48)].copy()
-
-    out["Marcador"] = out["PTS_LOCAL"].astype(int).astype(str) + " - " + out["PTS_VISITANTE"].astype(int).astype(str)
-    return out.sort_values(["JORNADA","FECHA","GAME_ID"]).reset_index(drop=True)
-
-def render_header():
-    hc = st.columns([2, 1, 2, 2])
-    hc[0].markdown('<div class="hdr" style="text-align:right;">Local</div>', unsafe_allow_html=True)
-    hc[1].markdown('<div class="hdr" style="text-align:center;">Marcador</div>', unsafe_allow_html=True)
-    hc[2].markdown('<div class="hdr" style="text-align:left;">Visitante</div>', unsafe_allow_html=True)
-    hc[3].markdown('<div class="hdr" style="text-align:right;">Fecha</div>', unsafe_allow_html=True)
-
-def render_fila_partido(r, key_suffix):
-    """Fila de partido. Click en el marcador para ver boxscore (misma página)."""
-    f = r["FECHA"].strftime("%d/%m/%Y") if pd.notnull(r["FECHA"]) else ""
-    col1, col2, col3, col4 = st.columns([2, 1, 2, 2])
-
-    with col1:
-        st.markdown(f'<div class="cell-right">{r["LOCAL"]}</div>', unsafe_allow_html=True)
-    with col2:
-        if st.button(r["Marcador"], key=f"g_{r['GAME_ID']}_{key_suffix}", use_container_width=True):
-            st.session_state["game_sel"] = r["GAME_ID"]
-            st.rerun()
-    with col3:
-        st.markdown(f'<div class="cell-left">{r["VISITANTE"]}</div>', unsafe_allow_html=True)
-    with col4:
-        st.markdown(f'<div class="cell-right date">{f}</div>', unsafe_allow_html=True)
+    df = df.sort_values(["FECHA", "GAME_ID"]).reset_index(drop=True)
+    return df
 
 # ---------- gráfico: diferencia 0..40 ----------
 def _build_diff_series_40min(df_box: pd.DataFrame, team_local: str, team_visit: str):
-    """
-    Serie de diferencia por minuto (0..40) siguiendo tu regla:
-    - Cada jugador aporta todos sus PTS en el minuto ceil(MIN).
-    - Se suman por equipo en ese minuto.
-    - Dif puntual (local - visita) y luego acumulado.
-    Devuelve (minutes, diff_acum)
-    """
-    minutes = list(range(0, 41))  # 0..40
+    minutes = list(range(0, 41))
     diff_by_min = [0] * 41
     if df_box is None or df_box.empty:
         return minutes, diff_by_min
@@ -125,9 +109,8 @@ def _build_diff_series_40min(df_box: pd.DataFrame, team_local: str, team_visit: 
     diff_acum = list(itertools.accumulate(diff_by_min))
     return minutes, diff_acum
 
-# ---------- standings compactos para 2 equipos ----------
+# ---------- standings global ----------
 def _build_standings(df_games: pd.DataFrame, equipos_df: pd.DataFrame) -> pd.DataFrame:
-    """Tabla de posiciones global (PJ/PG/PP/DIF + últimos 5) para todos los equipos."""
     if df_games is None or df_games.empty:
         return pd.DataFrame()
 
@@ -137,7 +120,7 @@ def _build_standings(df_games: pd.DataFrame, equipos_df: pd.DataFrame) -> pd.Dat
     c_vis   = _col(df, "VISITANTE","away","AWAY")
     c_pl    = _col(df, "PTS_LOCAL","pts_local","HOME_PTS")
     c_pv    = _col(df, "PTS_VISITANTE","pts_visitante","AWAY_PTS")
-    if not all([c_fecha, c_loc, c_vis, c_pl, c_pv]): 
+    if not all([c_fecha, c_loc, c_vis, c_pl, c_pv]):
         return pd.DataFrame()
 
     df[c_fecha] = pd.to_datetime(df[c_fecha], errors="coerce")
@@ -165,7 +148,6 @@ def _build_standings(df_games: pd.DataFrame, equipos_df: pd.DataFrame) -> pd.Dat
     )
     tabla["DIF"] = tabla["PTS_FOR"] - tabla["PTS_AGAINST"]
 
-    # últimos 5
     last_all = {t: [] for t in tabla["ABBR"]}
     for _, r in df.iterrows():
         h, a = r[c_loc], r[c_vis]
@@ -194,12 +176,10 @@ def _build_standings(df_games: pd.DataFrame, equipos_df: pd.DataFrame) -> pd.Dat
     return tabla[["#","ABBR","Equipo","PJ","PG","PP","DIF","last5"]]
 
 def _render_prematch_card(tabla: pd.DataFrame, t_local: str, t_visit: str):
-    """Dibuja la tarjetita 'Clasificación pre-partido' para ambos equipos."""
     if tabla.empty or not t_local or not t_visit:
         return
 
     sub = tabla[tabla["ABBR"].isin([t_local, t_visit])].copy()
-    # mantener orden por ranking (#)
     sub = sub.sort_values("#")
 
     st.markdown("""
@@ -256,51 +236,41 @@ def _render_prematch_card(tabla: pd.DataFrame, t_local: str, t_visit: str):
     )
     st.markdown(html, unsafe_allow_html=True)
 
-# ---------- render partido (misma página) ----------
-def render_boxscore_inline(game_id: str):
-    """Render del boxscore y gráfico debajo, en la misma página."""
+# ---------- render boxscore ----------
+def render_boxscore_inline(game_id: str, partidos_df: pd.DataFrame):
     if boxscores is None or boxscores.empty:
         st.warning("No hay boxscores disponibles.")
         return
 
-    # Info del encabezado desde 'partidos'
-    p = partidos.copy()
-    c_game  = _col(p, "GAME_ID","game_id")
-    c_fecha = _col(p, "FECHA","fecha","DATE","date")
-    c_loc   = _col(p, "LOCAL","home","HOME")
-    c_vis   = _col(p, "VISITANTE","away","AWAY")
-    c_pl    = _col(p, "PTS_LOCAL","HOME_PTS")
-    c_pv    = _col(p, "PTS_VISITANTE","AWAY_PTS")
+    p = partidos_df
+    row = p[p["GAME_ID"].astype(str) == str(game_id)].head(1)
 
     header_txt = f"Partido {game_id}"
     team_local = ""
     team_visit = ""
-    if all([c_game,c_fecha,c_loc,c_vis,c_pl,c_pv]):
-        row = p[p[c_game].astype(str) == str(game_id)].head(1)
-        if not row.empty:
-            fecha = pd.to_datetime(row.iloc[0][c_fecha], errors="coerce")
-            ftxt = fecha.strftime("%d %b %Y") if pd.notna(fecha) else ""
-            team_local = str(row.iloc[0][c_loc])
-            team_visit = str(row.iloc[0][c_vis])
-            header_txt = f"**{team_local} {int(row.iloc[0][c_pl])} – {int(row.iloc[0][c_pv])} {team_visit}** · {ftxt}"
+    if not row.empty:
+        fecha = row.iloc[0]["FECHA"]
+        ftxt = fecha.strftime("%d %b %Y") if pd.notna(fecha) else ""
+        team_local = str(row.iloc[0]["LOCAL"])
+        team_visit = str(row.iloc[0]["VISITANTE"])
+        pl = int(row.iloc[0]["PTS_LOCAL"])
+        pv = int(row.iloc[0]["PTS_VISITANTE"])
+        header_txt = f"**{team_local} {pl} – {pv} {team_visit}** · {ftxt}"
 
     st.markdown("---")
     st.markdown(f"### 📊 {header_txt}")
 
-    # Filtrar boxscore del juego
     df_game = boxscores[boxscores["GAME_ID"].astype(str) == str(game_id)].copy()
     if df_game.empty:
         st.info("No se encontraron estadísticas para este partido.")
-        st.markdown("")
-        if st.button("⬅ Volver a la lista de partidos"):
-            st.session_state["game_sel"] = ""
+        if st.button("⬅ Volver al calendario"):
+            ss["game_sel"] = ""
             st.rerun()
         return
 
-    # ====== LAYOUT: Izquierda gráfico + card / Derecha tabla ======
     c_left, c_right = st.columns([1, 1.4])
 
-    # ---------- IZQUIERDA: gráfico de diferencia 0..40 + CLASIFICACIÓN ----------
+    # Izquierda: gráfico + card
     with c_left:
         if team_local and team_visit:
             x, y = _build_diff_series_40min(df_game, team_local, team_visit)
@@ -315,23 +285,21 @@ def render_boxscore_inline(game_id: str):
             )
             fig.update_layout(
                 height=280,
-                margin=dict(l=10, r=10, t=90, b=10),  # ← más espacio arriba
+                margin=dict(l=10, r=10, t=60, b=10),
                 xaxis_title="Minuto",
                 yaxis_title="Diferencia",
                 xaxis=dict(range=[0, 40], tickmode="linear", dtick=5, zeroline=True),
                 yaxis=dict(zeroline=True),
                 showlegend=False,
             )
-
             st.plotly_chart(fig, use_container_width=True)
 
-            # 👇 AHORA el card queda justo DEBAJO del gráfico, en la columna izquierda
-            tabla = _build_standings(partidos, equipos)
+            tabla = _build_standings(partidos_df, equipos)
             _render_prematch_card(tabla, team_local, team_visit)
         else:
             st.info("No tengo parciales por período para graficar la evolución del marcador.")
 
-    # ---------- DERECHA: filtro equipo + tabla ----------
+    # Derecha: boxscore filtrable
     with c_right:
         choice = st.segmented_control(
             "Equipo",
@@ -358,88 +326,328 @@ def render_boxscore_inline(game_id: str):
             "PLUS_MINUS":"+/-"
         }).copy()
 
-        # Convertir MIN a formato mm:ss para display
         if "MIN" in df_show.columns:
             df_show["MIN"] = df_show["MIN"].apply(lambda x: minutos_decimal_a_mmss(x) if pd.notna(x) else "0:00")
-
         if "PTS" in df_show.columns:
             df_show = df_show.sort_values("PTS", ascending=False)
 
         height = 48 + 32 * len(df_show)
         st.dataframe(
-            df_show.set_index(df_show.columns[0]),  # usar nombre del jugador como índice
+            df_show.set_index(df_show.columns[0]),
             use_container_width=True,
             height=height
         )
 
-
-    # Botón volver
     st.markdown("")
-    if st.button("⬅ Volver a la lista de partidos"):
-        st.session_state["game_sel"] = ""
+    if st.button("⬅ Volver al calendario"):
+        ss["game_sel"] = ""
         st.rerun()
 
+# ---------- calendario ----------
+def render_calendar(partidos_df: pd.DataFrame):
+    """
+    Calendario mensual clásico, pero mostrando semanas donde:
+    - Siempre arranca por el día 1 (si la primer semana no arranca en el 1, va vacía/cortada)
+    - Nunca puede terminar en una semana donde luego del último día del mes siga la numeración por 1,2,3, etc (no mostrar días que sean del día 1 del mes siguiente)
+    - Si la última fila tiene días > 27 y luego 1,2... → la semana se debe recortar para mostrar solo los días del mes (28, 29, 30, 31) y sacar esos días "1,2,.."
+    - Lo mismo si la última semana arranca en 27,28.. y sigue el mes que viene.
+    """
+    if partidos_df is None or partidos_df.empty:
+        st.info("No hay datos de partidos con las columnas esperadas.")
+        return
 
-# ---------- estilos ----------
+    # Asegurar FECHA_DATE
+    df = partidos_df.copy()
+    if "FECHA_DATE" not in df.columns:
+        if "FECHA" not in df.columns:
+            st.warning("No se encuentra la columna 'FECHA' en los datos.")
+            return
+        df["FECHA"] = pd.to_datetime(df["FECHA"], errors="coerce")
+        df = df[df["FECHA"].notna()].copy()
+        df["FECHA_DATE"] = df["FECHA"].dt.date
+
+    if df.empty:
+        st.info("No hay fechas válidas en los datos de partidos.")
+        return
+
+    min_date = df["FECHA_DATE"].min()
+    max_date = df["FECHA_DATE"].max()
+
+    # selected_date por defecto
+    if ss.get("selected_date") is None:
+        ss["selected_date"] = max_date
+
+    sel = ss["selected_date"]
+    if isinstance(sel, str):
+        sel = pd.to_datetime(sel).date()
+        ss["selected_date"] = sel
+
+    # mes/año visibles
+    if ss.get("calendar_year") is None or ss.get("calendar_month") is None:
+        ss["calendar_year"] = sel.year
+        ss["calendar_month"] = sel.month
+
+    year = ss["calendar_year"]
+    month = ss["calendar_month"]
+
+    # navegación mes
+    c_prev, c_label, c_next = st.columns([0.15, 0.7, 0.15])
+    with c_prev:
+        if st.button("◀", key="cal_prev"):
+            if month == 1:
+                year -= 1
+                month = 12
+            else:
+                month -= 1
+            ss["calendar_year"], ss["calendar_month"] = year, month
+            st.rerun()
+
+    with c_label:
+        st.markdown(
+            f"<h3 style='text-align:center;margin-bottom:0.2rem;'>{calendar.month_name[month]} {year}</h3>",
+            unsafe_allow_html=True
+        )
+
+    with c_next:
+        if st.button("▶", key="cal_next"):
+            if month == 12:
+                year += 1
+                month = 1
+            else:
+                month += 1
+            ss["calendar_year"], ss["calendar_month"] = year, month
+            st.rerun()
+
+    # estilos tipo datepicker simple, personalizada
+    st.markdown("""
+    <style>
+      #nba-cal { margin-top: 4px; }
+      #nba-cal .cal-header {
+        text-align:center;
+        font-weight:600;
+        color:#9ca3af;
+        font-size:11px;
+        margin-bottom:4px;
+      }
+      #nba-cal .stButton > button {
+        width: 95vw !important;
+        min-width: 80px !important;
+        max-width: 200px !important;
+        padding: 10px 0 !important;
+        border-radius: 999px;
+        border: 1px solid transparent;
+        background: transparent;
+        color: #e5e7eb;
+        font-size: 18px;
+        box-shadow: none;
+        margin-left: auto;
+        margin-right: auto;
+        display: block;
+      }
+      #nba-cal .stButton > button:hover {
+        background: #111827;
+        border-color: #4f46e5;
+        color: #a5b4fc;
+      }
+      #nba-cal .day-selected > button {
+        background: #2563eb !important;
+        border-color: #2563eb !important;
+        color: #ffffff !important;
+        font-weight: 700 !important;
+      }
+      #nba-cal .day-outside {
+        color: #4b5563 !important;
+      }
+    </style>
+    """, unsafe_allow_html=True)
+
+    cal = calendar.Calendar(firstweekday=0)  # 0 = lunes LUN
+    weeks_raw = cal.monthdatescalendar(year, month)
+
+    # --- APLICAR LA LÓGICA REQUERIDA ---
+
+    # 1. Arrancar sí o sí la PRIMER SEMANA (de weeks_raw) en el día 1 del mes
+    #    Si antes de ese día hay días de otro mes, ponerlos en blanco/vacío (no mostrar días previos)
+    #    Hallar la posicion/índice del día 1 del mes en la primera semana
+    first_week = list(weeks_raw[0])
+    first_day_idx = None
+    for idx, d in enumerate(first_week):
+        if d.day == 1 and d.month == month:
+            first_day_idx = idx
+            break
+    # Recortar la primera semana si arranca antes del día 1
+    # Si el primer valor NO es 1 del mes, entonces ponemos los días antes de ese index en None
+    if first_day_idx is not None:
+        fw = []
+        for idx, d in enumerate(first_week):
+            if idx < first_day_idx:
+                fw.append(None)
+            else:
+                fw.append(d)
+        weeks = [fw]
+    else:
+        # No debería pasar, pero fallback: semana original
+        weeks = [first_week]
+
+    # 2. Incluir las semanas siguientes, menos la última, tal cual
+    for i in range(1, len(weeks_raw)):
+        weeks.append(list(weeks_raw[i]))
+
+    # 3. Cortar la última semana si termina en días 1,2,3.. etc (del mes siguiente)
+    #    o si la última fila es, p.ej., [28,29,30,1,2,3,4] => sólo [28,29,30]
+    #    Se debe mostrar sólo hasta el último día del mes
+
+    # Saber cantidad de días del mes actual
+    _, last_day_of_month = calendar.monthrange(year, month)
+
+    # Reprocesamos la última semana:
+    if weeks:
+        # Si la última semana NO contiene ningún día del mes siguiente, la dejamos tal cual
+        # Sino, la recortamos en el primer día que ya no sea de este mes
+        last_week = weeks[-1]
+        cut_idx = None
+        for idx, d in enumerate(last_week):
+            # d puede ser None (lo pusimos en la primera semana)
+            if d is not None and (d.month != month):
+                cut_idx = idx
+                break
+        if cut_idx is not None:
+            # Revisar lógica especial: si la última semana tiene día >=28 y después viene 1,2..
+            # Queremos mostrar SOLO los días del mes anterior a ese primer día de siguiente mes
+            # Ejemplo: [28,29,30,1,2,3,4] --> solo 28,29,30
+            week_trimmed = []
+            for idx, d in enumerate(last_week):
+                if d is not None and d.month == month:
+                    week_trimmed.append(d)
+                else:
+                    week_trimmed.append(None)
+            weeks[-1] = week_trimmed
+        # Si la última semana termina con días antes del 28, dejar (meses cortos)
+        # Si la última semana es solo del mes (todo dentro del mes), no hacemos nada
+        # Si termina con, p.ej., [29,30,31, None, None, None, None], ningún problema, todo ok
+
+    # --- encabezado días ---
+    st.markdown("<div id='nba-cal'>", unsafe_allow_html=True)
+    day_labels = ["Lun","Mar","Mié","Jue","Vie","Sáb","Dom"]
+    header_cols = st.columns(7)
+    for i, lab in enumerate(day_labels):
+        header_cols[i].markdown(f"<div class='cal-header'>{lab}</div>", unsafe_allow_html=True)
+
+    # --- filas del calendario ---
+    for w_idx, week in enumerate(weeks):
+        cols = st.columns(7)
+        for i, day in enumerate(week):
+            is_selected = False
+            show_btn = False
+            label = ""
+
+            if day is None:
+                # Primeros blancos
+                cols[i].write("")
+                continue
+
+            in_month = (day.month == month)
+            is_selected = (day == sel) if in_month else False
+            # Mostramos SÓLO días del mes
+            if in_month:
+                show_btn = True
+                label = str(day.day)
+            else:
+                # No mostrar días del mes siguiente (ni anteriores ya que se ponen como None)
+                cols[i].write("")
+                continue
+
+            btn_classes = []
+            if is_selected:
+                btn_classes.append("day-selected")
+            if not in_month:
+                btn_classes.append("day-outside")
+            class_attr = " ".join(btn_classes) if btn_classes else ""
+
+            with cols[i]:
+                st.markdown(f"<div class='{class_attr}'>", unsafe_allow_html=True)
+                if st.button(label, key=f"cal_{day.isoformat()}_{w_idx}_{i}"):
+                    ss["selected_date"] = day
+                    ss["game_sel"] = ""
+                    st.rerun()
+                st.markdown("</div>", unsafe_allow_html=True)
+
+    st.markdown("</div>", unsafe_allow_html=True)
+
+    # Partidos del día seleccionado
+    st.markdown("### 🏀 Partidos del día seleccionado")
+    show_games_for_date(df, ss["selected_date"])
+
+def show_games_for_date(partidos_df: pd.DataFrame, fecha):
+    if fecha is None:
+        st.info("Elegí una fecha para ver los partidos.")
+        return
+
+    games = partidos_df[partidos_df["FECHA_DATE"] == fecha].copy()
+    if games.empty:
+        st.info("No hay partidos para este día.")
+        return
+
+    for _, g in games.iterrows():
+        game_id = g["GAME_ID"]
+        local = g["LOCAL"]
+        visit = g["VISITANTE"]
+        marcador = g["MARCADOR"]
+
+        logo_local = get_team_logo(equipos, local)
+        logo_visit = get_team_logo(equipos, visit)
+
+        with st.container():
+            c1, c2, c3, c4 = st.columns([0.5, 1, 1, 1])
+
+            with c1:
+                if logo_local:
+                    st.image(logo_local, width=32)
+                st.markdown(f"**{local}**")
+            with c2:
+                if st.button(marcador, key=f"score_{game_id}", use_container_width=True):
+                    ss["game_sel"] = game_id
+                    st.rerun()
+            with c3:
+                if logo_visit:
+                    st.image(logo_visit, width=32)
+                st.markdown(f"**{visit}**")
+            with c4:
+                st.markdown(g["FECHA"].strftime("%d/%m/%Y"))
+
+        st.markdown("<hr style='border-color:#1f2937;'>", unsafe_allow_html=True)
+
+# ---------- estilos globales ----------
 st.markdown("""
 <style>
-  .hdr {
-    font-weight:700;
-    color:#cfd9e6;
-    padding-bottom:20px;   /* antes era 8px */
-    padding-top:10px;      /* sube el texto */
-    margin-top:10px;      /* lo empuja hacia arriba */
-}
-  .cell-right {text-align:right;font-weight:600;}
-  .cell-left  {text-align:left;font-weight:600;}
-  .date {color:#9aa4b8;}
-  /* El marcador se ve como texto clickeable */
   .stButton > button {
     background: transparent !important;
-    border: none !important;
+    border-radius: 8px !important;
+    border: 1px solid #374151 !important;
+    padding: 2px 6px !important;
+    font-weight: 700 !important;
     box-shadow: none !important;
-    padding: 0 !important;
-    margin: 0 !important;
-    border-radius: 0 !important;
-    font-weight: 800 !important;
-    cursor: pointer;
+    min-width: 120px !important;
+    max-width: 200px !important;
+    width: 131% !important;
   }
-  .stButton > button:hover { text-decoration: underline !important; color:#a8b7ff !important; }
-  /* línea separadora entre filas + espacio chico bajo título */
-  [data-testid="stHorizontalBlock"] { border-bottom: 1px solid #243249; margin: 0; }
-  h3 + div[data-testid="stHorizontalBlock"] { margin-top: 6px; }
+  .stButton > button:hover {
+    background: #111827 !important;
+    color: #a5b4fc !important;
+  }
 </style>
 """, unsafe_allow_html=True)
 
-# ---------- datos ----------
-dfj = preparar_partidos(partidos)
-if dfj.empty:
+# ---------- datos + UI ----------
+dfp = preparar_partidos(partidos)
+if dfp.empty:
     st.info("No hay datos de partidos con las columnas esperadas.")
-    st.stop()
-
-# ---------- UI ----------
-modo = st.segmented_control("Vista", options=["Jornada única","Todas (1–48)"], default="Jornada única")
-
-if ss["game_sel"]:
-    render_boxscore_inline(ss["game_sel"])
 else:
-    if modo == "Jornada única":
-        j = st.slider("Jornada", min_value=1, max_value=48, value=1, step=1)
-        sub = dfj[dfj["JORNADA"] == j]
-        st.subheader(f"Jornada {j}")
-        if sub.empty:
-            st.info("Sin partidos en esta jornada.")
-        else:
-            render_header()
-            for idx, (_, r) in enumerate(sub.iterrows()):
-                render_fila_partido(r, idx)
+    if ss["game_sel"]:
+        render_boxscore_inline(ss["game_sel"], dfp)
     else:
-        for j in range(1, 49):
-            sub = dfj[dfj["JORNADA"] == j]
-            with st.expander(f"Jornada {j} — {len(sub)} partidos", expanded=(j==1)):
-                if sub.empty:
-                    st.caption("Sin partidos.")
-                else:
-                    render_header()
-                    for idx, (_, r) in enumerate(sub.iterrows()):
-                        render_fila_partido(r, f"{j}_{idx}")
+        render_calendar(dfp)
+
+st.markdown("---")
+if st.button("⬅ Volver al Inicio"):
+    st.switch_page("main.py")

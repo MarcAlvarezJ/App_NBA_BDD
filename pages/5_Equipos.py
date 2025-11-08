@@ -24,6 +24,17 @@ if "TEAM_NAME" in equipos.columns:
         .to_dict()
     )
 
+# Para obtener logo del equipo seleccionado:
+team_logo_map = {}
+if "TEAM_ABBREVIATION" in equipos.columns and "LOGO_URL" in equipos.columns:
+    team_logo_map = (
+        equipos[["TEAM_ABBREVIATION", "LOGO_URL"]]
+        .drop_duplicates().set_index("TEAM_ABBREVIATION")["LOGO_URL"]
+        .to_dict()
+    )
+else:
+    team_logo_map = {}
+
 default_abbr = ss.get("team_sel") if ss.get("team_sel") in team_abbrs else (team_abbrs[0] if team_abbrs else "")
 team_sel = st.selectbox(
     "📌 Elegir equipo",
@@ -34,7 +45,20 @@ team_sel = st.selectbox(
 team_name = team_map.get(team_sel, team_sel)
 ss["team_sel"] = team_sel
 
-st.title(f"🏀 {team_sel} — {team_name}")
+# -- LOGO DEL EQUIPO (reemplaza el icono 🏀 al principio de la cabecera) --
+selected_logo_url = team_logo_map.get(team_sel, None)
+if selected_logo_url and isinstance(selected_logo_url, str) and selected_logo_url.strip():
+    logo_html = f"""<img src="{selected_logo_url}" style="vertical-align:middle; height:38px; margin-right:12px; margin-top:-3px; border-radius:6px; box-shadow:none;" alt="logo"/>"""
+else:
+    logo_html = ""
+
+# Mostrar el título con el logo en vez de 🏀
+st.markdown(
+    f"<h1 style='display:flex; align-items:center; gap:10px; font-size:2.2rem; font-weight:700;'>"
+    f"{logo_html}<span>{team_sel} — {team_name}</span>"
+    f"</h1>",
+    unsafe_allow_html=True
+)
 
 # ------------------ helpers ------------------
 def _col(df, *names):
@@ -216,15 +240,24 @@ def build_standings(df_games: pd.DataFrame, equipos_df: pd.DataFrame) -> dict:
 
     tabla["last5"] = tabla["ABBR"].map(lambda t: take_last5(last_all.get(t, [])))
 
-    # Agregar nombre y conferencia desde equipos_df
-    if "TEAM_NAME" in equipos_df.columns:
+    # Agregar nombre, conferencia y LOGO desde equipos_df
+    if {"TEAM_NAME", "LOGO_URL"}.issubset(equipos_df.columns):
+        tabla = tabla.merge(
+            equipos_df[["TEAM_ABBREVIATION","TEAM_NAME","LOGO_URL"]].drop_duplicates(),
+            left_on="ABBR", right_on="TEAM_ABBREVIATION", how="left"
+        )
+        tabla["Equipo"] = tabla["TEAM_NAME"].fillna(tabla["ABBR"])
+        tabla["LOGO_URL"] = tabla["LOGO_URL"]
+    elif "TEAM_NAME" in equipos_df.columns:
         tabla = tabla.merge(
             equipos_df[["TEAM_ABBREVIATION","TEAM_NAME"]].drop_duplicates(),
             left_on="ABBR", right_on="TEAM_ABBREVIATION", how="left"
         )
         tabla["Equipo"] = tabla["TEAM_NAME"].fillna(tabla["ABBR"])
+        tabla["LOGO_URL"] = ""
     else:
         tabla["Equipo"] = tabla["ABBR"]
+        tabla["LOGO_URL"] = ""
     
     # Agregar conferencia
     if "CONFERENCE" in equipos_df.columns:
@@ -252,15 +285,16 @@ def build_standings(df_games: pd.DataFrame, equipos_df: pd.DataFrame) -> dict:
     east.insert(0, "#", range(1, len(east) + 1))
     west.insert(0, "#", range(1, len(west) + 1))
     
-    # Seleccionar columnas finales (mantener ABBR para selección, sin PJ)
-    east = east[["#","ABBR","Equipo","W","L","DIF","last5"]].copy()
-    west = west[["#","ABBR","Equipo","W","L","DIF","last5"]].copy()
+    # Seleccionar columnas finales (mantener ABBR para selección, sin PJ, y con logo)
+    east = east[["#","ABBR","Equipo","LOGO_URL","W","L","DIF","last5"]].copy()
+    west = west[["#","ABBR","Equipo","LOGO_URL","W","L","DIF","last5"]].copy()
     
     return {"East": east, "West": west}
 
 def render_standings_html(tablas: dict, selected: str):
     """
     Renderiza las tablas de posiciones divididas por conferencia.
+    (Con logo por equipo y sin fondo extra para logos).
     """
     css = """
     <style>
@@ -270,6 +304,15 @@ def render_standings_html(tablas: dict, selected: str):
       .row { background:#151a22; border:1px solid #222b38; }
       .row.sel { background:#233044; border-color:#2f3d53; }
       .left { text-align:left !important; padding-left:12px !important; }
+      .eqlogo {
+        vertical-align: middle;
+        margin-right: 7px;
+        margin-left: 2px;
+        border-radius: 5px;
+        box-shadow: none;
+        background: transparent !important;
+        border: none !important;
+      }
       .pill {
         display:inline-flex; align-items:center; justify-content:center;
         border-radius:15px; padding:2px 0; margin:0 3px; font-weight:800;
@@ -278,6 +321,8 @@ def render_standings_html(tablas: dict, selected: str):
       .w { background:#1f6f3f; }
       .l { background:#8e2727; }
       .n { background:#6b7280; }
+      /* Ajusta ancho columna equipo con logo */
+      .standings .td-eq { text-align:left !important; padding-left:12px !important; }
     </style>
     """
     
@@ -299,10 +344,18 @@ def render_standings_html(tablas: dict, selected: str):
                 f"<span class='pill {'w' if v=='W' else 'l' if v=='L' else 'n'}'>{v if v else ''}</span>"
                 for v in r["last5"]
             )
+
+            logo_img = ""
+            # Solo mostrar imagen si existe el campo/logo
+            if isinstance(r.get("LOGO_URL", ""), str) and r.get("LOGO_URL", "").strip():
+                logo_img = f"<img class='eqlogo' src='{r['LOGO_URL']}' alt='logo' width='28' style='vertical-align:middle;background:transparent;border:none;'/>"
+            # Mostrado: logo + nombre (alineados)
+            equipo_html = f"<span style='display:inline-flex;align-items:center'>{logo_img}<span>{r['Equipo']}</span></span>"
+
             html.append(
                 f"<tr class='{cls}'>"
-                f"<td>{r['#']}</td>"
-                f"<td class='left'>{r['Equipo']}</td>"
+                f"<td>{int(r['#'])}</td>"
+                f"<td class='left td-eq'>{equipo_html}</td>"
                 f"<td>{r['W']}</td><td>{r['L']}</td><td>{r['DIF']}</td>"
                 f"<td>{pills}</td>"
                 f"</tr>"
@@ -584,11 +637,76 @@ with col_left:
     else:
         box = st.container(border=True)
         with box:
-            fecha_txt = fx['fecha'].strftime('%d %b %Y') if hasattr(fx['fecha'], "strftime") else str(fx['fecha'])
-            st.markdown(f"**{fecha_txt}**")
-            st.write(f"**{fx['home']}**  vs  **{fx['away']}**")
-            st.caption(f"{team_sel} juega de **{fx['condicion']}** · Rival: **{fx['rival']}**")
+            # Obtener logos de home y away del df equipos
+            home_logo = None
+            away_logo = None
+            if fx and not equipos.empty and "TEAM_ABBREVIATION" in equipos.columns and "LOGO_URL" in equipos.columns:
+                try:
+                    home_abbr = fx["home"]
+                    away_abbr = fx["away"]
+                    home_logo = equipos.loc[equipos["TEAM_ABBREVIATION"] == home_abbr, "LOGO_URL"].values
+                    home_logo = home_logo[0] if len(home_logo) > 0 else None
+                    away_logo = equipos.loc[equipos["TEAM_ABBREVIATION"] == away_abbr, "LOGO_URL"].values
+                    away_logo = away_logo[0] if len(away_logo) > 0 else None
+                except Exception:
+                    home_logo, away_logo = None, None
 
+            # ========= Alinear logos y abreviaciones en mismo eje, solo UNA VEZ cada uno + fecha, sin repetir =========
+            st.markdown("""
+            <style>
+            .np-row {
+                display: flex;
+                flex-direction: row;
+                align-items: center;
+                justify-content: space-between;
+                margin-bottom: 0.2em;
+                margin-top: 8px;
+            }
+            .np-team-block {
+                display: flex;
+                flex-direction: column;
+                align-items: center;
+                justify-content: center;
+                min-width: 80px;
+            }
+            .np-team-abbr {
+                font-weight: bold;
+                font-size: 1.1em;
+                margin-top: 6px;
+                letter-spacing: 1.5px;
+                text-align: center;
+            }
+            .np-middle-block {
+                display: flex;
+                flex-direction: column;
+                align-items: center;
+                justify-content: center;
+                min-width: 70px;
+            }
+            </style>
+            """, unsafe_allow_html=True)
+
+            # Solo una fila, con escudos y abreviatura debajo (cada lado) y fecha azul en el centro (debajo de VS)
+            fecha_txt = fx['fecha'].strftime('%d %b %Y') if hasattr(fx['fecha'], "strftime") else str(fx['fecha'])
+            st.markdown(
+                f"""
+                <div class="np-row">
+                    <div class="np-team-block">
+                        {'<img src="' + home_logo + '" width="56"/>' if home_logo else ''}
+                        <div class="np-team-abbr">{fx['home']}</div>
+                    </div>
+                    <div class="np-middle-block">
+                        <span style='font-size:26px; font-weight:700; color:#fff'>VS</span>
+                        <span style='color:#7c8cff;font-size:13px;margin-top:3px'>{fecha_txt}</span>
+                    </div>
+                    <div class="np-team-block">
+                        {'<img src="' + away_logo + '" width="56"/>' if away_logo else ''}
+                        <div class="np-team-abbr">{fx['away']}</div>
+                    </div>
+                </div>
+                """,
+                unsafe_allow_html=True
+            )
     st.markdown("### 📜 Historial reciente")
     juegos = games_for_team(partidos, team_sel)
     render_history_cards(juegos, team_sel)
