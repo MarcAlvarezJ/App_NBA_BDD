@@ -8,6 +8,52 @@ from utils import load_data, check_auth, logout, get_current_user, init_session_
 # Config & Session
 # ---------------------------------------------------
 st.set_page_config(page_title="NBA Stats App", layout="wide")
+
+
+# CSS personalizado para fondo negro
+st.markdown("""
+<style>
+    /* Fondo principal negro */
+    .stApp {
+        background-color: #000000;
+    }
+    
+    /* Fondo de los contenedores principales */
+    .main .block-container {
+        background-color: #000000;
+        padding-top: 2rem;
+        padding-bottom: 2rem;
+    }
+    
+    /* Fondo de las secciones */
+    section[data-testid="stSidebar"] {
+        background-color: #0e1117;
+    }
+    
+    /* Ajustes de texto para mejor legibilidad */
+    h1, h2, h3, h4, h5, h6, p, div, span {
+        color: #ffffff !important;
+    }
+    
+    /* Dataframes con fondo oscuro */
+    .dataframe {
+        background-color: #0e1117 !important;
+    }
+    
+    /* Inputs y selectboxes */
+    .stSelectbox > div > div {
+        background-color: #0e1117;
+    }
+    
+    /* Botones */
+    .stButton > button {
+        background-color: #1f77b4;
+        color: white;
+    }
+</style>
+""", unsafe_allow_html=True)
+
+
 init_session_state()
 
 partidos, partidos_futuros, boxscores, equipos, jugadores = load_data()
