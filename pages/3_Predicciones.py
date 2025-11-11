@@ -841,17 +841,29 @@ def construir_tabla_posiciones_final(
     
     tabla = record_predicho.copy()
     
-    # Agregar nombres de equipos
+    # Agregar nombres de equipos y logos
     if not equipos_df.empty and "TEAM_NAME" in equipos_df.columns:
-        tabla = tabla.merge(
-            equipos_df[["TEAM_ABBREVIATION", "TEAM_NAME"]].drop_duplicates(),
-            left_on="TEAM",
-            right_on="TEAM_ABBREVIATION",
-            how="left"
-        )
-        tabla["Equipo"] = tabla["TEAM_NAME"].fillna(tabla["TEAM"])
+        if "LOGO_URL" in equipos_df.columns:
+            tabla = tabla.merge(
+                equipos_df[["TEAM_ABBREVIATION", "TEAM_NAME", "LOGO_URL"]].drop_duplicates(),
+                left_on="TEAM",
+                right_on="TEAM_ABBREVIATION",
+                how="left"
+            )
+            tabla["Equipo"] = tabla["TEAM_NAME"].fillna(tabla["TEAM"])
+            tabla["LOGO_URL"] = tabla["LOGO_URL"].fillna("")
+        else:
+            tabla = tabla.merge(
+                equipos_df[["TEAM_ABBREVIATION", "TEAM_NAME"]].drop_duplicates(),
+                left_on="TEAM",
+                right_on="TEAM_ABBREVIATION",
+                how="left"
+            )
+            tabla["Equipo"] = tabla["TEAM_NAME"].fillna(tabla["TEAM"])
+            tabla["LOGO_URL"] = ""
     else:
         tabla["Equipo"] = tabla["TEAM"]
+        tabla["LOGO_URL"] = ""
     
     # Agregar conferencia
     if "CONFERENCE" in equipos_df.columns:
@@ -888,9 +900,9 @@ def construir_tabla_posiciones_final(
     west["W"] = west["W"].round(1)
     west["L"] = west["L"].round(1)
     
-    # Seleccionar columnas finales (sin PJ)
-    east = east[["#", "Equipo", "W", "L"]].copy()
-    west = west[["#", "Equipo", "W", "L"]].copy()
+    # Seleccionar columnas finales (sin PJ, incluyendo LOGO_URL)
+    east = east[["#", "Equipo", "LOGO_URL", "W", "L"]].copy()
+    west = west[["#", "Equipo", "LOGO_URL", "W", "L"]].copy()
     
     return {"East": east, "West": west}
 
@@ -993,16 +1005,31 @@ with tab1:
                         pts_local_pred, pts_visit_pred, desvio_local, desvio_visit
                     )
                     
+                    # Obtener logos de los equipos
+                    logo_local = None
+                    logo_visit = None
+                    if not equipos.empty and "LOGO_URL" in equipos.columns:
+                        logo_local_row = equipos[equipos["TEAM_ABBREVIATION"] == team_local]
+                        logo_visit_row = equipos[equipos["TEAM_ABBREVIATION"] == team_visit]
+                        if not logo_local_row.empty:
+                            logo_local = logo_local_row.iloc[0].get("LOGO_URL", "")
+                        if not logo_visit_row.empty:
+                            logo_visit = logo_visit_row.iloc[0].get("LOGO_URL", "")
+                    
                     # Mostrar resultado predicho
                     st.markdown("### Resultado Predicho")
                     col1, col2, col3 = st.columns([2, 1, 2])
                     with col1:
+                        if logo_local:
+                            st.image(logo_local, width=60)
                         st.markdown(f"### {team_local}")
                         st.markdown(f"## {pts_local_pred:.1f}")
                         st.markdown(f"**Probabilidad de victoria: {prob_local*100:.1f}%**")
                     with col2:
                         st.markdown("## vs")
                     with col3:
+                        if logo_visit:
+                            st.image(logo_visit, width=60)
                         st.markdown(f"### {team_visit}")
                         st.markdown(f"## {pts_visit_pred:.1f}")
                         st.markdown(f"**Probabilidad de victoria: {prob_visit*100:.1f}%**")
@@ -1139,21 +1166,77 @@ with tab2:
                 
                 if not tablas_final["East"].empty or not tablas_final["West"].empty:
                     st.markdown("### Tabla de Posiciones Final (Predicha)")
+                    
+                    # CSS para las tablas con logos
+                    PREDICTIONS_CSS = """
+                    <style>
+                      .pred-standings { width:100%; border-collapse:separate; border-spacing:0 6px; }
+                      .pred-standings th {
+                        text-align:center; color:#cfd9e6; font-weight:600; padding:8px 6px;
+                      }
+                      .pred-standings td {
+                        text-align:center; color:#e6eef6; padding:10px 6px;
+                      }
+                      .pred-row { background:#151a22; border:1px solid #222b38; }
+                      .pred-left { text-align:left !important; padding-left:12px !important; }
+                      .pred-logo {
+                        vertical-align: middle;
+                        margin-right: 7px;
+                        margin-left: 2px;
+                        border-radius: 5px;
+                        box-shadow: none;
+                        background: transparent !important;
+                        border: none !important;
+                      }
+                      .pred-standings .td-eq { text-align:left !important; padding-left:12px !important; }
+                    </style>
+                    """
+                    
+                    def render_prediction_table(conf_name: str, tabla: pd.DataFrame) -> str:
+                        if tabla.empty:
+                            return f"<p style='color:#9ca3af;'>No hay posiciones disponibles para {conf_name}.</p>"
+                        
+                        html = [
+                            f"<h3 style='margin-bottom:4px;'>{conf_name} Conference</h3>",
+                            "<table class='pred-standings'>",
+                            "<thead><tr>",
+                            "<th>#</th><th class='pred-left'>Equipo</th><th>W</th><th>L</th>",
+                            "</tr></thead><tbody>",
+                        ]
+                        
+                        for _, r in tabla.iterrows():
+                            url = str(r.get("LOGO_URL", "") or "").strip()
+                            logo_img = (
+                                f"<img class='pred-logo' src='{url}' alt='logo' width='28' "
+                                "style='vertical-align:middle;background:transparent;border:none;'/>"
+                                if url
+                                else ""
+                            )
+                            
+                            equipo_html = (
+                                f"<span style='display:inline-flex;align-items:center'>"
+                                f"{logo_img}<span>{r['Equipo']}</span></span>"
+                            )
+                            
+                            html.append(
+                                f"<tr class='pred-row'>"
+                                f"<td>{int(r['#'])}</td>"
+                                f"<td class='pred-left td-eq'>{equipo_html}</td>"
+                                f"<td>{r['W']}</td><td>{r['L']}</td>"
+                                f"</tr>"
+                            )
+                        
+                        html.append("</tbody></table>")
+                        return "".join(html)
+                    
+                    st.markdown(PREDICTIONS_CSS, unsafe_allow_html=True)
                     col1, col2 = st.columns(2)
                     
                     with col1:
-                        st.subheader("🏀 Eastern Conference")
-                        if not tablas_final["East"].empty:
-                            st.dataframe(tablas_final["East"], use_container_width=True, hide_index=True)
-                        else:
-                            st.info("No hay datos disponibles")
+                        st.markdown(render_prediction_table("Eastern", tablas_final["East"]), unsafe_allow_html=True)
                     
                     with col2:
-                        st.subheader("🏀 Western Conference")
-                        if not tablas_final["West"].empty:
-                            st.dataframe(tablas_final["West"], use_container_width=True, hide_index=True)
-                        else:
-                            st.info("No hay datos disponibles")
+                        st.markdown(render_prediction_table("Western", tablas_final["West"]), unsafe_allow_html=True)
                     
                 else:
                     st.warning("No se pudo construir la tabla de posiciones.")
