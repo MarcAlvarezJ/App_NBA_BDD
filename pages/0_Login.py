@@ -45,5 +45,5 @@ if not check_auth():
 	st.info("💡 Puedes usar la aplicación sin iniciar sesión, pero algunas funcionalidades estarán limitadas según las políticas RLS configuradas en Supabase.")
 else:
 	if st.button("⬅ Volver al Dashboard"):
-		st.switch_page("main.py")
+		st.switch_page("Home.py")
 

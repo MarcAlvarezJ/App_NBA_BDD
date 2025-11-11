@@ -564,4 +564,4 @@ else:
 
 st.markdown("---")
 if st.button("⬅ Volver al Inicio"):
-    st.switch_page("main.py")
+    st.switch_page("Home.py")

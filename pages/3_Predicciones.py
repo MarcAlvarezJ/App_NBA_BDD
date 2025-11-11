@@ -610,6 +610,12 @@ def predecir_boxscore_completo(
     jugadores_local = obtener_jugadores_equipo_min_10min(boxscores_df, jugadores_df, team_local)
     jugadores_visit = obtener_jugadores_equipo_min_10min(boxscores_df, jugadores_df, team_visit)
     
+    # Limitar a los 12 jugadores con más minutos promedio (si hay más de 12)
+    if not jugadores_local.empty and "MIN" in jugadores_local.columns:
+        jugadores_local = jugadores_local.sort_values("MIN", ascending=False).head(12)
+    if not jugadores_visit.empty and "MIN" in jugadores_visit.columns:
+        jugadores_visit = jugadores_visit.sort_values("MIN", ascending=False).head(12)
+    
     # Distribuir estadísticas entre jugadores
     boxscore_local = distribuir_estadisticas_jugadores(stats_local, jugadores_local)
     boxscore_visit = distribuir_estadisticas_jugadores(stats_visit, jugadores_visit)
@@ -1149,7 +1155,6 @@ with tab2:
                         else:
                             st.info("No hay datos disponibles")
                     
-                    st.caption("💡 Los valores de PG y PP son probabilidades acumuladas de victorias y derrotas predichas.")
                 else:
                     st.warning("No se pudo construir la tabla de posiciones.")
         except Exception as e:

@@ -53,7 +53,7 @@ jug_1 = ss.jugador_sel
 if not jug_1:
     st.info("Elegí un jugador para ver sus estadísticas.")
     if st.button("⬅ Volver al Inicio"):
-        st.switch_page("main.py")
+        st.switch_page("Home.py")
     st.stop()
 
 
@@ -453,4 +453,4 @@ else:
 # ================== VOLVER ==================
 st.divider()
 if st.button("⬅ Volver al Inicio"):
-    st.switch_page("main.py")
+    st.switch_page("Home.py")

@@ -1,7 +1,7 @@
 # Configuración de navegación de páginas de Streamlit
 
 [[pages]]
-path = "main.py"
+path = "Home.py"
 name = "Inicio"
 icon = "house"
 

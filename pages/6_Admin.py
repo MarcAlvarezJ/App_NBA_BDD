@@ -688,5 +688,5 @@ with tab5:
 # Footer
 st.markdown("---")
 if st.button("⬅ Volver al Dashboard"):
-	st.switch_page("main.py")
+	st.switch_page("Home.py")
 

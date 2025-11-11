@@ -1,4 +1,4 @@
-# main.py
+# Home.py
 
 import streamlit as st
 import pandas as pd
@@ -62,7 +62,7 @@ ss = st.session_state
 ss.setdefault("jugador_sel", "")
 ss.setdefault("team_sel", "")
 
-if ss.get("_last_page") != "main":
+if ss.get("_last_page") != "inicio":
     ss.jugador_sel = ""
     ss.team_sel = ""
 
@@ -429,4 +429,4 @@ st.markdown("---")
 st.caption("Usá el buscador de arriba o las pestañas para explorar equipos y jugadores.")
 
 # Marcar página actual
-ss._last_page = "main"
+ss._last_page = "inicio"
