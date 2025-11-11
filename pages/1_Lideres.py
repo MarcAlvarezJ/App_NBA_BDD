@@ -59,7 +59,7 @@ else:
     equipos_jugador = juegos_jugador.set_index("PLAYER_NAME")["TEAM_ABBREVIATION"].to_dict()
     promedios["Equipo"] = promedios["PLAYER_NAME"].map(equipos_jugador)
 
-    # Para mostrar: usar colores oscuros y sin border-radius
+    # Para mostrar: usar colores y negritas nice
     top_ptos = promedios.sort_values(by="PTS", ascending=False).head(10)[["PLAYER_NAME", "Equipo", "PTS"]].reset_index(drop=True)
     top_ptos["PTS"] = top_ptos["PTS"].round(1)
     top_asis = promedios.sort_values(by="AST", ascending=False).head(10)[["PLAYER_NAME", "Equipo", "AST"]].reset_index(drop=True)
@@ -67,13 +67,10 @@ else:
     top_reb = promedios.sort_values(by="REB", ascending=False).head(10)[["PLAYER_NAME", "Equipo", "REB"]].reset_index(drop=True)
     top_reb["REB"] = top_reb["REB"].round(1)
 
+    # Títulos bonitos arriba de cada columna
     col1, col2, col3 = st.columns(3, gap="large")
     with col1:
-        st.markdown(
-            "<div style='background-color:#121a33;padding:12px;text-align:center'>"
-            "<span style='color:#fff;font-weight:bold;font-size:20px;'>🏀 Puntos por partido</span></div>",
-            unsafe_allow_html=True
-        )
+        st.markdown("<div style='background-color:#1d428a;padding:12px;border-radius:12px;text-align:center'><span style='color:#fff;font-weight:bold;font-size:20px;'>🏀 Puntos por partido</span></div>", unsafe_allow_html=True)
         st.dataframe(
             top_ptos.rename(columns={
                 "PLAYER_NAME": "Jugador",
@@ -87,11 +84,7 @@ else:
             }
         )
     with col2:
-        st.markdown(
-            "<div style='background-color:#015624;padding:12px;text-align:center'>"
-            "<span style='color:#fff;font-weight:bold;font-size:20px;'>🎯 Asistencias por partido</span></div>",
-            unsafe_allow_html=True
-        )
+        st.markdown("<div style='background-color:#007A33;padding:12px;border-radius:12px;text-align:center'><span style='color:#fff;font-weight:bold;font-size:20px;'>🅰️ Asistencias por partido</span></div>", unsafe_allow_html=True)
         st.dataframe(
             top_asis.rename(columns={
                 "PLAYER_NAME": "Jugador",
@@ -105,11 +98,7 @@ else:
             }
         )
     with col3:
-        st.markdown(
-            "<div style='background-color:#3b2707;padding:12px;text-align:center'>"
-            "<span style='color:#fff;font-weight:bold;font-size:20px;'>🧱 Rebotes por partido</span></div>",
-            unsafe_allow_html=True
-        )
+        st.markdown("<div style='background-color:#FFC72C;padding:12px;border-radius:12px;text-align:center'><span style='color:#1d428a;font-weight:bold;font-size:20px;'>🧱 Rebotes por partido</span></div>", unsafe_allow_html=True)
         st.dataframe(
             top_reb.rename(columns={
                 "PLAYER_NAME": "Jugador",
@@ -123,11 +112,102 @@ else:
             }
         )
 
+    # ========== NUEVA FILA DE TRES TABLAS: ROBOS | BLOQUEOS | % TIROS LIBRES =============
+
+    # Robos por partido
+    if "STL" in boxscores.columns:
+        promedios_stl = (
+            boxscores_filtrado.groupby("PLAYER_NAME")["STL"].mean().reset_index()
+        )
+        promedios_stl["Equipo"] = promedios_stl["PLAYER_NAME"].map(equipos_jugador)
+        top_stl = promedios_stl.sort_values(by="STL", ascending=False).head(10)[["PLAYER_NAME", "Equipo", "STL"]].reset_index(drop=True)
+        top_stl["STL"] = top_stl["STL"].round(1)
+    else:
+        top_stl = None
+
+    # Bloqueos por partido
+    if "BLK" in boxscores.columns:
+        promedios_blk = (
+            boxscores_filtrado.groupby("PLAYER_NAME")["BLK"].mean().reset_index()
+        )
+        promedios_blk["Equipo"] = promedios_blk["PLAYER_NAME"].map(equipos_jugador)
+        top_blk = promedios_blk.sort_values(by="BLK", ascending=False).head(10)[["PLAYER_NAME", "Equipo", "BLK"]].reset_index(drop=True)
+        top_blk["BLK"] = top_blk["BLK"].round(1)
+    else:
+        top_blk = None
+
+    # Porcentaje de tiros libres
+    if "FTM" in boxscores.columns and "FTA" in boxscores.columns:
+        tiros_libres_agg = (
+            boxscores_filtrado.groupby("PLAYER_NAME")[["FTM", "FTA"]].sum().reset_index()
+        )
+        tiros_libres_agg["Equipo"] = tiros_libres_agg["PLAYER_NAME"].map(equipos_jugador)
+        # Filtrar solo jugadores con al menos los mínimos de la imagen
+        tiros_libres_agg = tiros_libres_agg[tiros_libres_agg["FTM"] >= 125]
+        tiros_libres_agg = tiros_libres_agg[tiros_libres_agg["FTA"] > 0]
+        # Calcular %
+        tiros_libres_agg["% Efectividad"] = tiros_libres_agg["FTM"] / tiros_libres_agg["FTA"] * 100
+        top_ft = tiros_libres_agg.sort_values(by="% Efectividad", ascending=False).head(10)[["PLAYER_NAME", "Equipo", "% Efectividad"]].reset_index(drop=True)
+        top_ft["% Efectividad"] = top_ft["% Efectividad"].round(1)
+    else:
+        top_ft = None
+
+    # Mostrar nuevas tablas (robos, bloques y tiros libres) en una fila, una al lado de la otra
+    col4, col5, col6 = st.columns(3, gap="large")
+    with col4:
+        st.markdown("<div style='background-color:#86c5e7;padding:12px;border-radius:12px;text-align:center;margin-top:18px;'><span style='color:#1d428a;font-weight:bold;font-size:20px;'>🕵️ Robos por partido</span></div>", unsafe_allow_html=True)
+        if top_stl is not None:
+            st.dataframe(
+                top_stl.rename(columns={
+                    "PLAYER_NAME": "Jugador",
+                    "Equipo": "Equipo",
+                    "STL": "STL"
+                }),
+                hide_index=True,
+                use_container_width=True,
+                column_config={
+                    "STL": st.column_config.NumberColumn(format="%.1f")
+                }
+            )
+        else:
+            st.info("Robos por partido no disponibles.")
+    with col5:
+        st.markdown("<div style='background-color:#b296ff;padding:12px;border-radius:12px;text-align:center;margin-top:18px;'><span style='color:#1d428a;font-weight:bold;font-size:20px;'>⛔ Bloqueos por partido</span></div>", unsafe_allow_html=True)
+        if top_blk is not None:
+            st.dataframe(
+                top_blk.rename(columns={
+                    "PLAYER_NAME": "Jugador",
+                    "Equipo": "Equipo",
+                    "BLK": "BLK"
+                }),
+                hide_index=True,
+                use_container_width=True,
+                column_config={
+                    "BLK": st.column_config.NumberColumn(format="%.1f")
+                }
+            )
+        else:
+            st.info("Bloqueos por partido no disponibles.")
+    with col6:
+        st.markdown("<div style='background-color:#FFD6D6;padding:12px;border-radius:12px;text-align:center;margin-top:18px;'><span style='color:#1d428a;font-weight:bold;font-size:20px;'>🎯 % Tiros libres</span></div>", unsafe_allow_html=True)
+        if top_ft is not None and not top_ft.empty:
+            st.dataframe(
+                top_ft.rename(columns={
+                    "PLAYER_NAME": "Jugador",
+                    "Equipo": "Equipo",
+                    "% Efectividad": "% Efectividad"
+                }),
+                hide_index=True,
+                use_container_width=True,
+                column_config={
+                    "% Efectividad": st.column_config.NumberColumn(format="%.1f")
+                }
+            )
+        else:
+            st.info("% Tiros libres no disponible o no hay jugadores con el mínimo requerido.")
+
     # Footer con estilo NBA
     st.markdown("""
         <hr>
-        <div style='text-align:center;color:#1d428a;font-weight:500;font-size:15px;opacity:0.7;'>
-            Datos filtrados por jugadores que participaron en al menos el 70% de los partidos del equipo.<br>
-            NBA Stats App | Creado con <span style="color:#e74c3c;">❤</span> por <b>tu equipo de datos</b>
-        </div>
+        
     """, unsafe_allow_html=True)

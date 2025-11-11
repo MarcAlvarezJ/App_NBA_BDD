@@ -75,42 +75,8 @@ def preparar_partidos(df_raw: pd.DataFrame) -> pd.DataFrame:
     df = df.sort_values(["FECHA", "GAME_ID"]).reset_index(drop=True)
     return df
 
-# ---------- gráfico: diferencia 0..40 ----------
-def _build_diff_series_40min(df_box: pd.DataFrame, team_local: str, team_visit: str):
-    minutes = list(range(0, 41))
-    diff_by_min = [0] * 41
-    if df_box is None or df_box.empty:
-        return minutes, diff_by_min
-
-    needed_cols = {"TEAM_ABBREVIATION", "MIN", "PTS"}
-    if not needed_cols.issubset(set(df_box.columns)):
-        return minutes, diff_by_min
-
-    for _, row in df_box.iterrows():
-        team = str(row["TEAM_ABBREVIATION"])
-        try:
-            mins = float(row["MIN"])
-        except Exception:
-            mins = 0.0
-        try:
-            pts = int(row["PTS"])
-        except Exception:
-            try:
-                pts = int(float(row["PTS"]))
-            except Exception:
-                pts = 0
-
-        minute_mark = max(0, min(40, math.ceil(mins)))
-        if team == team_local:
-            diff_by_min[minute_mark] += pts
-        elif team == team_visit:
-            diff_by_min[minute_mark] -= pts
-
-    diff_acum = list(itertools.accumulate(diff_by_min))
-    return minutes, diff_acum
-
-# ---------- standings global ----------
-def _build_standings(df_games: pd.DataFrame, equipos_df: pd.DataFrame) -> pd.DataFrame:
+# ---------- standings global MODIFICADO ----------
+def _build_standings_upto(df_games: pd.DataFrame, equipos_df: pd.DataFrame, fecha_corte, game_id_excluir=None) -> pd.DataFrame:
     if df_games is None or df_games.empty:
         return pd.DataFrame()
 
@@ -120,10 +86,17 @@ def _build_standings(df_games: pd.DataFrame, equipos_df: pd.DataFrame) -> pd.Dat
     c_vis   = _col(df, "VISITANTE","away","AWAY")
     c_pl    = _col(df, "PTS_LOCAL","pts_local","HOME_PTS")
     c_pv    = _col(df, "PTS_VISITANTE","pts_visitante","AWAY_PTS")
-    if not all([c_fecha, c_loc, c_vis, c_pl, c_pv]):
+    c_gameid = _col(df, "GAME_ID", "game_id")
+    if not all([c_fecha, c_loc, c_vis, c_pl, c_pv, c_gameid]):
         return pd.DataFrame()
 
     df[c_fecha] = pd.to_datetime(df[c_fecha], errors="coerce")
+    if fecha_corte is not None:
+        # quedate SOLO con partidos anteriores al partido seleccionado
+        df = df[df[c_fecha] < fecha_corte]
+    if game_id_excluir is not None:
+        df = df[df[c_gameid] != game_id_excluir]
+
     df = df.sort_values(c_fecha)
 
     home = df.assign(
@@ -148,12 +121,13 @@ def _build_standings(df_games: pd.DataFrame, equipos_df: pd.DataFrame) -> pd.Dat
     )
     tabla["DIF"] = tabla["PTS_FOR"] - tabla["PTS_AGAINST"]
 
+    # Últimos 5 partidos HASTA fecha_corte, NO incluyas partido seleccionado
+    all_rows = all_rows.sort_values(c_fecha)
     last_all = {t: [] for t in tabla["ABBR"]}
-    for _, r in df.iterrows():
-        h, a = r[c_loc], r[c_vis]
-        pl, pv = int(r[c_pl]), int(r[c_pv])
-        last_all[h].append("W" if pl > pv else "L")
-        last_all[a].append("W" if pv > pl else "L")
+    for _, r in all_rows.iterrows():
+        abbr = r["ABBR"]
+        res = "W" if r["WIN"] else "L"
+        last_all[abbr].append(res)
 
     def take_last5(seq):
         tail = seq[-5:] if len(seq) >= 5 else seq
@@ -174,6 +148,7 @@ def _build_standings(df_games: pd.DataFrame, equipos_df: pd.DataFrame) -> pd.Dat
     tabla = tabla.sort_values(by=["PG","DIF"], ascending=[False, False]).reset_index(drop=True)
     tabla.insert(0, "#", range(1, len(tabla) + 1))
     return tabla[["#","ABBR","Equipo","PJ","PG","PP","DIF","last5"]]
+
 
 def _render_prematch_card(tabla: pd.DataFrame, t_local: str, t_visit: str):
     if tabla.empty or not t_local or not t_visit:
@@ -248,6 +223,7 @@ def render_boxscore_inline(game_id: str, partidos_df: pd.DataFrame):
     header_txt = f"Partido {game_id}"
     team_local = ""
     team_visit = ""
+    fecha = None
     if not row.empty:
         fecha = row.iloc[0]["FECHA"]
         ftxt = fecha.strftime("%d %b %Y") if pd.notna(fecha) else ""
@@ -268,36 +244,18 @@ def render_boxscore_inline(game_id: str, partidos_df: pd.DataFrame):
             st.rerun()
         return
 
+    # Ya NO mostramos gráfico de diferencia de puntos
+
+    # Solo mini tabla de los últimos 5 partidos de cada equipo (previos al partido seleccionado)
     c_left, c_right = st.columns([1, 1.4])
 
-    # Izquierda: gráfico + card
     with c_left:
-        if team_local and team_visit:
-            x, y = _build_diff_series_40min(df_game, team_local, team_visit)
-            fig = go.Figure()
-            fig.add_trace(
-                go.Scatter(
-                    x=x, y=y, mode="lines",
-                    line=dict(width=3),
-                    name="Dif. acumulada (Local - Visita)",
-                    fill="tozeroy"
-                )
-            )
-            fig.update_layout(
-                height=280,
-                margin=dict(l=10, r=10, t=60, b=10),
-                xaxis_title="Minuto",
-                yaxis_title="Diferencia",
-                xaxis=dict(range=[0, 40], tickmode="linear", dtick=5, zeroline=True),
-                yaxis=dict(zeroline=True),
-                showlegend=False,
-            )
-            st.plotly_chart(fig, use_container_width=True)
-
-            tabla = _build_standings(partidos_df, equipos)
+        # Solo card mini tabla ultimos 5 de cada equipo HASTA fecha del partido, sin ese partido
+        if team_local and team_visit and fecha is not None:
+            tabla = _build_standings_upto(partidos_df, equipos, fecha, game_id_excluir=game_id)
             _render_prematch_card(tabla, team_local, team_visit)
         else:
-            st.info("No tengo parciales por período para graficar la evolución del marcador.")
+            st.info("No se puede mostrar la mini tabla para este partido.")
 
     # Derecha: boxscore filtrable
     with c_right:
@@ -343,14 +301,14 @@ def render_boxscore_inline(game_id: str, partidos_df: pd.DataFrame):
         ss["game_sel"] = ""
         st.rerun()
 
-# ---------- calendario ----------
+# ---------- calendario: LIMITADO AL MES DEL PRIMER Y DEL ULTIMO PARTIDO ----------
 def render_calendar(partidos_df: pd.DataFrame):
     """
-    Calendario mensual clásico, pero mostrando semanas donde:
-    - Siempre arranca por el día 1 (si la primer semana no arranca en el 1, va vacía/cortada)
-    - Nunca puede terminar en una semana donde luego del último día del mes siga la numeración por 1,2,3, etc (no mostrar días que sean del día 1 del mes siguiente)
-    - Si la última fila tiene días > 27 y luego 1,2... → la semana se debe recortar para mostrar solo los días del mes (28, 29, 30, 31) y sacar esos días "1,2,.."
-    - Lo mismo si la última semana arranca en 27,28.. y sigue el mes que viene.
+    Calendario mensual clásico:
+    - Fila de días (Lun-Dom)
+    - Cada día es un botón con el número
+    - Día seleccionado resaltado
+    - Limita meses a desde el mes del primer partido al mes del último partido (no puedes moverte fuera de rango)
     """
     if partidos_df is None or partidos_df.empty:
         st.info("No hay datos de partidos con las columnas esperadas.")
@@ -372,6 +330,10 @@ def render_calendar(partidos_df: pd.DataFrame):
 
     min_date = df["FECHA_DATE"].min()
     max_date = df["FECHA_DATE"].max()
+    min_year = min_date.year
+    min_month = min_date.month
+    max_year = max_date.year
+    max_month = max_date.month
 
     # selected_date por defecto
     if ss.get("selected_date") is None:
@@ -391,16 +353,24 @@ def render_calendar(partidos_df: pd.DataFrame):
     month = ss["calendar_month"]
 
     # navegación mes
+    # Limitar el rango de meses!
     c_prev, c_label, c_next = st.columns([0.15, 0.7, 0.15])
     with c_prev:
-        if st.button("◀", key="cal_prev"):
-            if month == 1:
-                year -= 1
-                month = 12
-            else:
-                month -= 1
-            ss["calendar_year"], ss["calendar_month"] = year, month
-            st.rerun()
+        disabled = False
+        if (year < min_year) or (year == min_year and month <= min_month):
+            disabled = True
+        if st.button("◀", key="cal_prev", disabled=disabled):
+            if not disabled:
+                if month == 1:
+                    year -= 1
+                    month = 12
+                else:
+                    month -= 1
+                # Tras navegar, limitar a rango
+                if year < min_year or (year == min_year and month < min_month):
+                    year, month = min_year, min_month
+                ss["calendar_year"], ss["calendar_month"] = year, month
+                st.rerun()
 
     with c_label:
         st.markdown(
@@ -409,16 +379,22 @@ def render_calendar(partidos_df: pd.DataFrame):
         )
 
     with c_next:
-        if st.button("▶", key="cal_next"):
-            if month == 12:
-                year += 1
-                month = 1
-            else:
-                month += 1
-            ss["calendar_year"], ss["calendar_month"] = year, month
-            st.rerun()
+        disabled = False
+        if (year > max_year) or (year == max_year and month >= max_month):
+            disabled = True
+        if st.button("▶", key="cal_next", disabled=disabled):
+            if not disabled:
+                if month == 12:
+                    year += 1
+                    month = 1
+                else:
+                    month += 1
+                if year > max_year or (year == max_year and month > max_month):
+                    year, month = max_year, max_month
+                ss["calendar_year"], ss["calendar_month"] = year, month
+                st.rerun()
 
-    # estilos tipo datepicker simple, personalizada
+    # estilos tipo datepicker simple
     st.markdown("""
     <style>
       #nba-cal { margin-top: 4px; }
@@ -430,15 +406,15 @@ def render_calendar(partidos_df: pd.DataFrame):
         margin-bottom:4px;
       }
       #nba-cal .stButton > button {
-        width: 95vw !important;
-        min-width: 80px !important;
-        max-width: 200px !important;
-        padding: 10px 0 !important;
+        width: 95vw !important;       /* Hacer los botones MUY ANCHOS usando viewport width */
+        min-width: 80px !important;   /* Ancho mínimo grande */
+        max-width: 200px !important;  /* Evitar que quede gigantesco en pantallas muy grandes */
+        padding: 10px 0 !important;   /* Más alto también */
         border-radius: 999px;
         border: 1px solid transparent;
         background: transparent;
         color: #e5e7eb;
-        font-size: 18px;
+        font-size: 18px;            /* Más grande la letra */
         box-shadow: none;
         margin-left: auto;
         margin-right: auto;
@@ -458,102 +434,40 @@ def render_calendar(partidos_df: pd.DataFrame):
       #nba-cal .day-outside {
         color: #4b5563 !important;
       }
+      #nba-cal .day-dot {
+        display:block;
+        text-align:center;
+        font-size:8px;
+        line-height:8px;
+        color:#60a5fa;
+        margin-top:-2px;
+      }
     </style>
     """, unsafe_allow_html=True)
 
-    cal = calendar.Calendar(firstweekday=0)  # 0 = lunes LUN
-    weeks_raw = cal.monthdatescalendar(year, month)
+    cal = calendar.Calendar(firstweekday=0)  # 0 = lunes
+    weeks = cal.monthdatescalendar(year, month)
 
-    # --- APLICAR LA LÓGICA REQUERIDA ---
-
-    # 1. Arrancar sí o sí la PRIMER SEMANA (de weeks_raw) en el día 1 del mes
-    #    Si antes de ese día hay días de otro mes, ponerlos en blanco/vacío (no mostrar días previos)
-    #    Hallar la posicion/índice del día 1 del mes en la primera semana
-    first_week = list(weeks_raw[0])
-    first_day_idx = None
-    for idx, d in enumerate(first_week):
-        if d.day == 1 and d.month == month:
-            first_day_idx = idx
-            break
-    # Recortar la primera semana si arranca antes del día 1
-    # Si el primer valor NO es 1 del mes, entonces ponemos los días antes de ese index en None
-    if first_day_idx is not None:
-        fw = []
-        for idx, d in enumerate(first_week):
-            if idx < first_day_idx:
-                fw.append(None)
-            else:
-                fw.append(d)
-        weeks = [fw]
-    else:
-        # No debería pasar, pero fallback: semana original
-        weeks = [first_week]
-
-    # 2. Incluir las semanas siguientes, menos la última, tal cual
-    for i in range(1, len(weeks_raw)):
-        weeks.append(list(weeks_raw[i]))
-
-    # 3. Cortar la última semana si termina en días 1,2,3.. etc (del mes siguiente)
-    #    o si la última fila es, p.ej., [28,29,30,1,2,3,4] => sólo [28,29,30]
-    #    Se debe mostrar sólo hasta el último día del mes
-
-    # Saber cantidad de días del mes actual
-    _, last_day_of_month = calendar.monthrange(year, month)
-
-    # Reprocesamos la última semana:
-    if weeks:
-        # Si la última semana NO contiene ningún día del mes siguiente, la dejamos tal cual
-        # Sino, la recortamos en el primer día que ya no sea de este mes
-        last_week = weeks[-1]
-        cut_idx = None
-        for idx, d in enumerate(last_week):
-            # d puede ser None (lo pusimos en la primera semana)
-            if d is not None and (d.month != month):
-                cut_idx = idx
-                break
-        if cut_idx is not None:
-            # Revisar lógica especial: si la última semana tiene día >=28 y después viene 1,2..
-            # Queremos mostrar SOLO los días del mes anterior a ese primer día de siguiente mes
-            # Ejemplo: [28,29,30,1,2,3,4] --> solo 28,29,30
-            week_trimmed = []
-            for idx, d in enumerate(last_week):
-                if d is not None and d.month == month:
-                    week_trimmed.append(d)
-                else:
-                    week_trimmed.append(None)
-            weeks[-1] = week_trimmed
-        # Si la última semana termina con días antes del 28, dejar (meses cortos)
-        # Si la última semana es solo del mes (todo dentro del mes), no hacemos nada
-        # Si termina con, p.ej., [29,30,31, None, None, None, None], ningún problema, todo ok
-
-    # --- encabezado días ---
+    # encabezado días
     st.markdown("<div id='nba-cal'>", unsafe_allow_html=True)
     day_labels = ["Lun","Mar","Mié","Jue","Vie","Sáb","Dom"]
     header_cols = st.columns(7)
     for i, lab in enumerate(day_labels):
         header_cols[i].markdown(f"<div class='cal-header'>{lab}</div>", unsafe_allow_html=True)
 
-    # --- filas del calendario ---
+    # filas del calendario
     for w_idx, week in enumerate(weeks):
         cols = st.columns(7)
         for i, day in enumerate(week):
-            is_selected = False
-            show_btn = False
-            label = ""
-
-            if day is None:
-                # Primeros blancos
+            in_month = (day.month == month)
+            is_selected = (day == sel)
+            # fuera del mes Y fuera del rango general -> vacío
+            if ((year == min_year and month == min_month and day.month < min_month) or 
+                (year == max_year and month == max_month and day.month > max_month)):
                 cols[i].write("")
                 continue
-
-            in_month = (day.month == month)
-            is_selected = (day == sel) if in_month else False
-            # Mostramos SÓLO días del mes
-            if in_month:
-                show_btn = True
-                label = str(day.day)
-            else:
-                # No mostrar días del mes siguiente (ni anteriores ya que se ponen como None)
+            # restricción: no muestres días fuera del rango total
+            if day < min_date or day > max_date:
                 cols[i].write("")
                 continue
 
@@ -566,7 +480,7 @@ def render_calendar(partidos_df: pd.DataFrame):
 
             with cols[i]:
                 st.markdown(f"<div class='{class_attr}'>", unsafe_allow_html=True)
-                if st.button(label, key=f"cal_{day.isoformat()}_{w_idx}_{i}"):
+                if st.button(str(day.day), key=f"cal_{day.isoformat()}_{w_idx}_{i}"):
                     ss["selected_date"] = day
                     ss["game_sel"] = ""
                     st.rerun()
