@@ -128,7 +128,7 @@ def get_cache_key() -> str:
 	return "anon"
 
 
-@st.cache_data(ttl=300)  # Cache por 5 minutos (300 segundos)
+@st.cache_data()  # Cache persistente hasta que se limpie manualmente
 def _load_data_cached(cache_key: str):
 	"""
 	Función interna que carga los datos con cache.
@@ -156,7 +156,7 @@ def load_data():
 	"""
 	Carga los datos desde Supabase con cache inteligente.
 	- Cache separado para usuarios anónimos y autenticados
-	- TTL de 5 minutos para refresco automático
+	- Cache persistente hasta que se limpie manualmente o se reinicie la app
 	- Se invalida automáticamente cuando cambia el estado de autenticación
 	"""
 	cache_key = get_cache_key()

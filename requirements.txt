@@ -1,7 +1,8 @@
-supabase 
-pandas
 streamlit
-requests
-matplotlib
+pandas
 numpy
+supabase
+plotly
+matplotlib
 scipy
+requests
